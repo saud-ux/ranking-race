@@ -7,6 +7,92 @@ const PRESETS = [
   'حيوانات','ماركات سيارات','أكلات','لاعبين كرة قدم','مهن','ألوان',
 ];
 
+// ─── Audio engine ─────────────────────────────────────────────────────────────
+
+let audioCtx = null;
+let muted = localStorage.getItem('muted') === '1';
+
+function getCtx() {
+  if (!audioCtx) {
+    const C = window.AudioContext || window.webkitAudioContext;
+    if (C) audioCtx = new C();
+  }
+  if (audioCtx?.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+document.addEventListener('pointerdown', () => getCtx(), { once: false, passive: true });
+
+function beep(freq, dur, type = 'sine', vol = 0.22) {
+  if (muted) return;
+  const ctx = getCtx();
+  if (!ctx) return;
+  const osc  = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, ctx.currentTime);
+  gain.gain.setValueAtTime(vol, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+  osc.start();
+  osc.stop(ctx.currentTime + dur);
+}
+
+function seq(notes) {
+  notes.forEach(n => setTimeout(() => beep(n.f, n.d, n.t || 'sine', n.v || 0.22), n.at || 0));
+}
+
+function sweep(f1, f2, dur, type = 'sawtooth', vol = 0.25) {
+  if (muted) return;
+  const ctx = getCtx();
+  if (!ctx) return;
+  const osc  = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.type = type;
+  osc.frequency.setValueAtTime(f1, ctx.currentTime);
+  osc.frequency.linearRampToValueAtTime(f2, ctx.currentTime + dur);
+  gain.gain.setValueAtTime(vol, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+  osc.start();
+  osc.stop(ctx.currentTime + dur);
+}
+
+const sfx = {
+  playerJoin()  { beep(660, 0.12, 'sine', 0.14); },
+  roundStart()  { seq([{f:400,d:0.09,at:0},{f:600,d:0.09,at:80},{f:900,d:0.18,at:160}]); },
+  timeUp()      { sweep(480, 90, 0.75, 'sawtooth', 0.28); },
+  adjReject()   { beep(220, 0.18, 'square', 0.15); },
+  adjAccept()   { beep(660, 0.12, 'sine', 0.15); },
+  scored()      { seq([{f:523,d:0.12,at:0},{f:659,d:0.12,at:110},{f:784,d:0.22,at:220}]); },
+  fanfare()     {
+    seq([
+      {f:523,d:0.13,at:0},   {f:523,d:0.13,at:140},
+      {f:523,d:0.13,at:280}, {f:698,d:0.35,at:420},
+      {f:659,d:0.35,at:780}, {f:587,d:0.13,at:1100},
+      {f:784,d:0.55,at:1240},
+    ]);
+  },
+};
+
+// ─── Mute toggle ──────────────────────────────────────────────────────────────
+
+function updateMuteBtn() {
+  const btn = document.getElementById('host-mute-btn');
+  if (!btn) return;
+  btn.textContent = muted ? '🔇' : '🔊';
+  btn.title = muted ? 'تشغيل الصوت' : 'كتم الصوت';
+}
+updateMuteBtn();
+
+document.getElementById('host-mute-btn')?.addEventListener('click', () => {
+  muted = !muted;
+  localStorage.setItem('muted', muted ? '1' : '0');
+  updateMuteBtn();
+});
+
 // ─── State ────────────────────────────────────────────────────────────────────
 
 let state = {
@@ -14,7 +100,8 @@ let state = {
   roomCode: localStorage.getItem('hostRoomCode'),
   phase: 'no-room',
   selectedCategory: '',
-  adjState: {}, // key → boolean (true = valid)
+  adjState: {},
+  prevPlayerCount: 0,
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -28,20 +115,16 @@ function showScreen(id) {
   document.getElementById(`screen-${id}`).classList.add('active');
 }
 
-// Show/hide the main panels based on game phase
 function showHostPhase(phase) {
   state.phase = phase;
-
   const allPanels = ['panel-no-room','panel-room-info','panel-right',
                      'panel-adjudication','panel-leaderboard','panel-final'];
-
   allPanels.forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     el.classList.add('hidden');
     if (id === 'panel-right') el.style.display = 'none';
   });
-
   document.getElementById('round-controls')?.classList.add('hidden');
 
   function show(id) {
@@ -52,43 +135,22 @@ function showHostPhase(phase) {
   }
 
   switch (phase) {
-    case 'no-room':
-      show('panel-no-room');
-      break;
-    case 'lobby':
-      show('panel-room-info');
-      show('panel-right');
-      show('round-controls');
-      break;
-    case 'round':
-      show('panel-room-info');
-      show('panel-right');
-      // round controls hidden during active round
-      break;
-    case 'adjudication':
-      show('panel-room-info');
-      show('panel-right');
-      show('panel-adjudication');
-      break;
-    case 'results':
-      show('panel-room-info');
-      show('panel-right');
-      show('panel-leaderboard');
-      break;
-    case 'finished':
-      show('panel-final');
-      break;
+    case 'no-room':     show('panel-no-room'); break;
+    case 'lobby':       show('panel-room-info'); show('panel-right'); show('round-controls'); break;
+    case 'round':       show('panel-room-info'); show('panel-right'); break;
+    case 'adjudication':show('panel-room-info'); show('panel-right'); show('panel-adjudication'); break;
+    case 'results':     show('panel-room-info'); show('panel-right'); show('panel-leaderboard'); break;
+    case 'finished':    show('panel-final'); break;
   }
 }
 
 function setConnectionStatus(status) {
-  const dot = document.getElementById('host-status-dot');
+  const dot   = document.getElementById('host-status-dot');
   const label = document.getElementById('host-conn-label');
   if (!dot) return;
   dot.className = `status-dot ${status}`;
   label.textContent = status === 'connected' ? 'متصل'
-                    : status === 'reconnecting' ? 'إعادة الاتصال…'
-                    : 'منقطع';
+                    : status === 'reconnecting' ? 'إعادة الاتصال…' : 'منقطع';
 }
 
 // ─── Lock screen ──────────────────────────────────────────────────────────────
@@ -99,6 +161,7 @@ document.getElementById('input-host-key').addEventListener('keydown', e => { if 
 function doUnlock() {
   const key = document.getElementById('input-host-key').value;
   document.getElementById('lock-error').textContent = '';
+  getCtx();
   socket.emit('host:authenticate', { key }, (res) => {
     if (res.ok) {
       state.hostKey = key;
@@ -113,19 +176,14 @@ function doUnlock() {
 function showMainConsole() {
   showScreen('console');
   buildPresets();
-  if (state.roomCode) {
-    tryRejoinRoom();
-  } else {
-    showHostPhase('no-room');
-  }
+  if (state.roomCode) tryRejoinRoom();
+  else showHostPhase('no-room');
 }
 
-// Validate saved key on load
 if (state.hostKey) {
   socket.emit('host:authenticate', { key: state.hostKey }, (res) => {
-    if (res.ok) {
-      showMainConsole();
-    } else {
+    if (res.ok) showMainConsole();
+    else {
       localStorage.removeItem('hostKey');
       state.hostKey = null;
       showScreen('lock');
@@ -158,7 +216,7 @@ document.getElementById('btn-create-room').addEventListener('click', () => {
   });
 });
 
-// ─── Rejoin existing room ─────────────────────────────────────────────────────
+// ─── Rejoin room ──────────────────────────────────────────────────────────────
 
 function tryRejoinRoom() {
   socket.emit('host:rejoin_room', { key: state.hostKey, code: state.roomCode }, (res) => {
@@ -168,7 +226,6 @@ function tryRejoinRoom() {
       showHostPhase('no-room');
       return;
     }
-
     setupRoomView(state.roomCode);
     renderPlayerList(res.players);
 
@@ -197,7 +254,6 @@ function setupRoomView(code) {
   document.getElementById('room-code-display').textContent = code;
   const joinUrl = `${window.location.origin}/?room=${code}`;
   document.getElementById('qr-url').textContent = joinUrl;
-
   if (typeof QRCode !== 'undefined') {
     QRCode.toDataURL(joinUrl, { width: 200, margin: 1, color: { dark: '#f59e0b', light: '#1a1a35' } }, (err, url) => {
       if (!err) document.getElementById('qr-img').src = url;
@@ -208,8 +264,13 @@ function setupRoomView(code) {
 // ─── Player list ──────────────────────────────────────────────────────────────
 
 function renderPlayerList(players) {
-  const list = document.getElementById('player-list');
-  document.getElementById('player-count-badge').textContent = `${players.length} / 20`;
+  const list  = document.getElementById('player-list');
+  const badge = document.getElementById('player-count-badge');
+  badge.textContent = `${players.length} / 20`;
+
+  // Play join sound when count increases
+  if (players.length > state.prevPlayerCount) sfx.playerJoin();
+  state.prevPlayerCount = players.length;
 
   if (!players.length) {
     list.innerHTML = '<p class="text-muted" style="font-size:0.9rem;">لم ينضم أحد بعد…</p>';
@@ -217,9 +278,11 @@ function renderPlayerList(players) {
   }
 
   list.innerHTML = '';
-  players.forEach(p => {
+  players.forEach((p, idx) => {
     const row = document.createElement('div');
     row.className = `player-row${p.connected ? '' : ' offline'}`;
+    row.style.setProperty('--row-delay', `${idx * 50}ms`);
+    row.classList.add('lb-row-enter');
     row.innerHTML = `
       <span class="${p.connected ? 'online-dot' : 'offline-dot'}"></span>
       <span class="player-name">${escapeHtml(p.nickname)}</span>
@@ -264,15 +327,9 @@ document.getElementById('custom-category').addEventListener('input', e => {
 function setSelectedCategory(cat) {
   state.selectedCategory = cat;
   const display = document.getElementById('selected-category-display');
-  const btn = document.getElementById('btn-start-round');
-  if (cat) {
-    display.textContent = `الفئة: ${cat}`;
-    display.classList.remove('hidden');
-    btn.disabled = false;
-  } else {
-    display.classList.add('hidden');
-    btn.disabled = true;
-  }
+  const btn     = document.getElementById('btn-start-round');
+  if (cat) { display.textContent = `الفئة: ${cat}`; display.classList.remove('hidden'); btn.disabled = false; }
+  else     { display.classList.add('hidden'); btn.disabled = true; }
 }
 
 // ─── Start round ──────────────────────────────────────────────────────────────
@@ -284,6 +341,7 @@ document.getElementById('btn-start-round').addEventListener('click', () => {
 
   socket.emit('host:start_round', { code: state.roomCode, category: state.selectedCategory }, (res) => {
     if (res?.ok) {
+      sfx.roundStart();
       showHostPhase('round');
     } else {
       document.getElementById('round-error').textContent = res?.error || 'حدث خطأ';
@@ -295,6 +353,7 @@ document.getElementById('btn-start-round').addEventListener('click', () => {
 // ─── Adjudication ─────────────────────────────────────────────────────────────
 
 socket.on('round:ended', ({ groups, category, roundNumber }) => {
+  sfx.timeUp();
   renderAdjudicationPanel(groups, category, roundNumber);
   showHostPhase('adjudication');
 });
@@ -303,42 +362,51 @@ function renderAdjudicationPanel(groups, category, roundNumber) {
   document.getElementById('adj-category').textContent = category;
   document.getElementById('adj-round-num').textContent = roundNumber;
 
-  // Reset adjudication state — all valid by default
   state.adjState = {};
   groups.forEach(g => { state.adjState[g.key] = true; });
-
   updateAdjStats(groups);
 
   const list = document.getElementById('adj-list');
   list.innerHTML = '';
-  groups.forEach(g => {
+
+  groups.forEach((g, idx) => {
     const row = document.createElement('div');
-    row.className = 'adj-row';
-    row.dataset.key = g.key;
+    row.className = 'adj-row lb-row-enter';
+    row.style.setProperty('--row-delay', `${idx * 40}ms`);
+    row.dataset.key   = g.key;
     row.dataset.label = g.displayLabel;
 
-    const count = g.playerCount;
     row.innerHTML = `
-      <button class="adj-toggle valid" title="تبديل الصحة">✓</button>
+      <button class="adj-toggle valid" title="تبديل">✓</button>
       <span class="adj-label">${escapeHtml(g.displayLabel)}</span>
-      <span class="adj-count">${count} ${count === 1 ? 'لاعب' : 'لاعبين'}</span>
+      <span class="adj-count">${g.playerCount} ${g.playerCount === 1 ? 'لاعب' : 'لاعبين'}</span>
     `;
 
     row.querySelector('.adj-toggle').addEventListener('click', (e) => {
-      const key = row.dataset.key;
+      const key   = row.dataset.key;
       state.adjState[key] = !state.adjState[key];
       const valid = state.adjState[key];
-      e.target.classList.toggle('valid', valid);
+      e.target.classList.toggle('valid',   valid);
       e.target.classList.toggle('invalid', !valid);
       e.target.textContent = valid ? '✓' : '✗';
       row.classList.toggle('rejected', !valid);
+
+      // Shake on reject, brief pop on accept
+      if (!valid) {
+        row.classList.remove('shake');
+        void row.offsetWidth;
+        row.classList.add('shake');
+        sfx.adjReject();
+      } else {
+        sfx.adjAccept();
+      }
+
       updateAdjStats(groups);
     });
 
     list.appendChild(row);
   });
 
-  // Search filter
   document.getElementById('adj-search').value = '';
   document.getElementById('adj-search').oninput = (e) => {
     const q = e.target.value.trim();
@@ -349,7 +417,7 @@ function renderAdjudicationPanel(groups, category, roundNumber) {
 }
 
 function updateAdjStats(groups) {
-  const valid = groups.filter(g => state.adjState[g.key] !== false).length;
+  const valid   = groups.filter(g => state.adjState[g.key] !== false).length;
   const invalid = groups.length - valid;
   document.getElementById('adj-stats').innerHTML = `
     <span>✓ مقبول: <strong>${valid}</strong></span>
@@ -361,16 +429,15 @@ function updateAdjStats(groups) {
 document.getElementById('btn-score-round').addEventListener('click', () => {
   const decisions = Object.entries(state.adjState).map(([key, valid]) => ({ key, valid }));
   document.getElementById('btn-score-round').disabled = true;
-
-  socket.emit('host:score_round', { code: state.roomCode, decisions }, (res) => {
+  socket.emit('host:score_round', { code: state.roomCode, decisions }, () => {
     document.getElementById('btn-score-round').disabled = false;
-    // round:results event will handle the UI transition
   });
 });
 
-// ─── Leaderboard (results) ────────────────────────────────────────────────────
+// ─── Leaderboard ──────────────────────────────────────────────────────────────
 
 socket.on('round:results', ({ leaderboard, roundNumber }) => {
+  sfx.scored();
   renderLeaderboard(leaderboard, roundNumber);
   showHostPhase('results');
 });
@@ -379,25 +446,25 @@ function renderLeaderboard(leaderboard, roundNumber) {
   document.getElementById('lb-round-num').textContent = roundNumber;
   const tbody = document.getElementById('lb-tbody');
   tbody.innerHTML = '';
-  leaderboard.forEach(entry => {
+  leaderboard.forEach((entry, idx) => {
     const tr = document.createElement('tr');
+    tr.className = idx === 0 ? 'rank-1-row lb-row-enter' : 'lb-row-enter';
+    tr.style.setProperty('--row-delay', `${idx * 70}ms`);
     const sign = entry.roundScore > 0 ? '+' : '';
-    const cls = entry.roundScore > 0 ? 'delta-pos' : entry.roundScore < 0 ? 'delta-neg' : 'delta-zero';
+    const cls  = entry.roundScore > 0 ? 'delta-pos' : entry.roundScore < 0 ? 'delta-neg' : 'delta-zero';
     tr.innerHTML = `
       <td class="rank-cell">${entry.rank}</td>
       <td class="name-cell">${escapeHtml(entry.nickname)}</td>
-      <td class="delta-cell ${cls}">${sign}${entry.roundScore}</td>
+      <td class="delta-cell ${cls} delta-pop" style="animation-delay:${idx*70+300}ms">${sign}${entry.roundScore}</td>
       <td class="score-cell">${entry.totalScore}</td>
     `;
     tbody.appendChild(tr);
   });
 }
 
-// New round
 document.getElementById('btn-new-round').addEventListener('click', () => {
   socket.emit('host:new_round', { code: state.roomCode }, (res) => {
     if (res?.ok) {
-      // Reset category selection
       state.selectedCategory = '';
       document.getElementById('selected-category-display').classList.add('hidden');
       document.getElementById('btn-start-round').disabled = true;
@@ -409,11 +476,8 @@ document.getElementById('btn-new-round').addEventListener('click', () => {
   });
 });
 
-// End game
 document.getElementById('btn-end-game').addEventListener('click', () => {
-  socket.emit('host:end_game', { code: state.roomCode }, (res) => {
-    // game:finished event will handle UI
-  });
+  socket.emit('host:end_game', { code: state.roomCode });
 });
 
 // ─── Final screen ─────────────────────────────────────────────────────────────
@@ -421,16 +485,18 @@ document.getElementById('btn-end-game').addEventListener('click', () => {
 socket.on('game:finished', ({ leaderboard }) => {
   renderFinal(leaderboard);
   showHostPhase('finished');
-  launchConfetti();
+  sfx.fanfare();
+  setTimeout(launchConfetti, 400);
 });
 
 function renderFinal(leaderboard) {
   renderPodium('host-podium', leaderboard);
-
   const tbody = document.getElementById('final-tbody');
   tbody.innerHTML = '';
-  leaderboard.forEach(entry => {
+  leaderboard.forEach((entry, idx) => {
     const tr = document.createElement('tr');
+    tr.className = idx === 0 ? 'rank-1-row lb-row-enter' : 'lb-row-enter';
+    tr.style.setProperty('--row-delay', `${idx * 60}ms`);
     tr.innerHTML = `
       <td class="rank-cell">${entry.rank}</td>
       <td class="name-cell">${escapeHtml(entry.nickname)}</td>
@@ -443,7 +509,7 @@ function renderFinal(leaderboard) {
 document.getElementById('btn-new-game').addEventListener('click', () => {
   localStorage.removeItem('hostRoomCode');
   state.roomCode = null;
-  state.phase = 'no-room';
+  state.prevPlayerCount = 0;
   showHostPhase('no-room');
 });
 
@@ -452,15 +518,12 @@ document.getElementById('btn-new-game').addEventListener('click', () => {
 function renderPodium(containerId, leaderboard) {
   const wrap = document.getElementById(containerId);
   wrap.innerHTML = '';
-  const top3 = leaderboard.slice(0, 3);
+  const top3  = leaderboard.slice(0, 3);
   if (!top3.length) return;
-
-  // Physical L→R order: 2nd, 1st, 3rd
-  const slots = [top3[1], top3[0], top3[2]];
-  const classes = ['second', 'first', 'third'];
-  const medals  = ['🥈', '🥇', '🥉'];
-  const labels  = ['2', '1', '3'];
-
+  const slots   = [top3[1], top3[0], top3[2]];
+  const classes  = ['second','first','third'];
+  const medals   = ['🥈','🥇','🥉'];
+  const labels   = ['2','1','3'];
   slots.forEach((entry, i) => {
     if (!entry) return;
     const div = document.createElement('div');
@@ -480,20 +543,16 @@ function renderPodium(containerId, leaderboard) {
 function launchConfetti() {
   const colors = ['#f59e0b','#10b981','#7c3aed','#ef4444','#3b82f6','#f97316','#ec4899'];
   for (let i = 0; i < 100; i++) {
-    const el = document.createElement('div');
+    const el   = document.createElement('div');
     const size = Math.random() * 10 + 5;
     el.style.cssText = [
-      `position:fixed`,
-      `width:${size}px`,
-      `height:${size}px`,
-      `background:${colors[Math.floor(Math.random() * colors.length)]}`,
-      `left:${Math.random() * 100}vw`,
-      `top:-12px`,
-      `border-radius:${Math.random() > 0.5 ? '50%' : '2px'}`,
-      `z-index:9999`,
-      `pointer-events:none`,
-      `animation:confetti-fall ${Math.random() * 2 + 2.5}s linear forwards`,
-      `animation-delay:${Math.random() * 2}s`,
+      `position:fixed`,`width:${size}px`,`height:${size}px`,
+      `background:${colors[Math.floor(Math.random()*colors.length)]}`,
+      `left:${Math.random()*100}vw`,`top:-12px`,
+      `border-radius:${Math.random()>0.5?'50%':'2px'}`,
+      `z-index:9999`,`pointer-events:none`,
+      `animation:confetti-fall ${Math.random()*2+2.5}s linear forwards`,
+      `animation-delay:${Math.random()*2}s`,
     ].join(';');
     document.body.appendChild(el);
     setTimeout(() => el.remove(), 6000);
@@ -504,7 +563,6 @@ function launchConfetti() {
 
 socket.on('disconnect', () => setConnectionStatus('reconnecting'));
 socket.on('connect_error', () => setConnectionStatus('disconnected'));
-
 socket.on('connect', () => {
   setConnectionStatus('connected');
   if (state.hostKey && state.roomCode) tryRejoinRoom();

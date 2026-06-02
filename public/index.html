@@ -41,9 +41,12 @@
     <!-- Top bar -->
     <div class="top-bar">
       <span id="display-nickname" class="nickname-badge"></span>
-      <div class="conn-status-wrap">
-        <span id="conn-label" class="conn-label">متصل</span>
-        <span id="status-dot" class="status-dot connected"></span>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <button id="mute-btn" class="mute-btn" title="كتم الصوت">🔊</button>
+        <div class="conn-status-wrap">
+          <span id="conn-label" class="conn-label">متصل</span>
+          <span id="status-dot" class="status-dot connected"></span>
+        </div>
       </div>
     </div>
 

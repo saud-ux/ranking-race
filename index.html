@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>سباق التصنيف</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <!-- ── Join screen ─────────────────────────────────────────────────────── -->
+  <div id="screen-join" class="screen active">
+    <div style="display:flex;flex-direction:column;flex:1;justify-content:center;padding:16px;">
+      <div class="card center-card">
+        <h1 class="game-title">🏁 سباق التصنيف</h1>
+
+        <div class="form-group">
+          <label for="input-room-code">كود الغرفة</label>
+          <input id="input-room-code" class="input" type="text" placeholder="مثال: ABCD"
+                 maxlength="4" autocomplete="off" autocapitalize="characters" inputmode="text"
+                 style="text-transform:uppercase;letter-spacing:6px;font-size:1.4rem;text-align:center;">
+        </div>
+
+        <div class="form-group">
+          <label for="input-nickname">اسمك</label>
+          <input id="input-nickname" class="input" type="text" placeholder="اكتب اسمك (حتى ٢٠ حرف)"
+                 maxlength="20" autocomplete="off">
+        </div>
+
+        <button id="btn-join" class="btn btn-primary btn-large">دخول</button>
+        <p id="join-error" class="error-text"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── In-game screen (all post-join states) ───────────────────────────── -->
+  <div id="screen-lobby" class="screen">
+
+    <!-- Top bar -->
+    <div class="top-bar">
+      <span id="display-nickname" class="nickname-badge"></span>
+      <div class="conn-status-wrap">
+        <span id="conn-label" class="conn-label">متصل</span>
+        <span id="status-dot" class="status-dot connected"></span>
+      </div>
+    </div>
+
+    <!-- Waiting (lobby phase) -->
+    <div id="state-waiting" class="card lobby-card">
+      <p style="font-size:2rem;">⏳</p>
+      <p class="lobby-message mt-8">في انتظار المضيف لبدء الجولة…</p>
+    </div>
+
+    <!-- In-round -->
+    <div id="state-round" class="hidden" style="padding:16px;max-width:520px;width:100%;margin:0 auto;">
+      <div class="card mb-16" style="text-align:center;">
+        <p class="text-muted mb-4" style="font-size:0.85rem;">الفئة</p>
+        <div id="category-display" class="category-display"></div>
+        <div id="countdown" class="countdown">30</div>
+      </div>
+      <div class="card">
+        <div class="answer-input-wrap">
+          <input id="answer-input" class="input" type="text" placeholder="اكتب إجابة واضغط إدخال…"
+                 autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+          <button id="btn-submit-answer" class="btn btn-primary">إرسال</button>
+        </div>
+        <div id="chips-area" class="chips-area"></div>
+      </div>
+    </div>
+
+    <!-- Round ended (adjudication phase) -->
+    <div id="state-ended" class="hidden">
+      <div class="card lobby-card" style="text-align:center;">
+        <div class="round-ended-msg">انتهى الوقت! ⏱️</div>
+        <p class="text-muted mt-8">في انتظار نتائج المضيف…</p>
+      </div>
+    </div>
+
+    <!-- Results / leaderboard -->
+    <div id="state-results" class="hidden">
+      <div class="card results-card">
+        <div class="results-header">
+          <div class="results-title">🏆 النتائج — الجولة <span id="results-round-num"></span></div>
+        </div>
+        <table class="leaderboard-table">
+          <thead>
+            <tr>
+              <th style="text-align:center;">#</th>
+              <th>الاسم</th>
+              <th style="text-align:center;">الجولة</th>
+              <th style="text-align:center;">المجموع</th>
+            </tr>
+          </thead>
+          <tbody id="results-tbody"></tbody>
+        </table>
+        <p class="waiting-for-host mt-16">في انتظار قرار المضيف…</p>
+      </div>
+    </div>
+
+    <!-- Final screen -->
+    <div id="state-final" class="hidden">
+      <div class="card results-card" style="text-align:center;">
+        <div style="font-size:1.8rem;font-weight:900;color:var(--accent);">🎉 انتهت اللعبة!</div>
+        <p class="text-muted mt-8 mb-16">النتائج النهائية</p>
+
+        <!-- Podium -->
+        <div id="final-podium" class="podium-wrap"></div>
+
+        <div class="divider"></div>
+
+        <!-- Full list -->
+        <table class="leaderboard-table mt-16">
+          <thead>
+            <tr>
+              <th style="text-align:center;">#</th>
+              <th>الاسم</th>
+              <th style="text-align:center;">المجموع</th>
+            </tr>
+          </thead>
+          <tbody id="final-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/player.js"></script>
+</body>
+</html>

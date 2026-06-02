@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>سباق التصنيف — المضيف</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <!-- ── Lock screen ─────────────────────────────────────────────────────── -->
+  <div id="screen-lock" class="screen lock-screen active">
+    <div class="card center-card">
+      <div class="lock-title">🔑 لوحة التحكم</div>
+      <div class="lock-subtitle">أدخل مفتاح المضيف للمتابعة</div>
+      <div class="form-group">
+        <input id="input-host-key" class="input" type="password"
+               placeholder="مفتاح المضيف" autocomplete="off"
+               style="text-align:center;letter-spacing:4px;">
+      </div>
+      <button id="btn-unlock" class="btn btn-primary btn-large">دخول</button>
+      <p id="lock-error" class="error-text"></p>
+    </div>
+  </div>
+
+  <!-- ── Host console ─────────────────────────────────────────────────────── -->
+  <div id="screen-console" class="screen host-console">
+
+    <div class="host-header">
+      <span class="host-header-title">🏁 سباق التصنيف — المضيف</span>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span id="host-conn-label" class="conn-label">متصل</span>
+        <span id="host-status-dot" class="status-dot connected"></span>
+        <button id="btn-logout" class="btn btn-secondary btn-small">خروج</button>
+      </div>
+    </div>
+
+    <div class="host-body">
+
+      <!-- No-room panel -->
+      <div id="panel-no-room" class="no-room-panel">
+        <h2>مرحباً بك!</h2>
+        <p>أنشئ غرفة جديدة للبدء</p>
+        <button id="btn-create-room" class="btn btn-primary" style="padding:16px 40px;font-size:1.1rem;">
+          إنشاء غرفة
+        </button>
+      </div>
+
+      <!-- Room info: code + QR -->
+      <div id="panel-room-info" class="room-info-panel card hidden">
+        <div class="room-code-wrap">
+          <div class="room-code-label">كود الغرفة</div>
+          <div id="room-code-display" class="room-code-display">—</div>
+        </div>
+        <div class="qr-wrap">
+          <img id="qr-img" class="qr-img" alt="QR" src="">
+          <div id="qr-url" class="qr-url"></div>
+        </div>
+      </div>
+
+      <!-- Right column: player list + round controls -->
+      <div id="panel-right" class="hidden" style="display:flex;flex-direction:column;gap:16px;">
+
+        <!-- Player list -->
+        <div class="card player-list-panel">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <span class="section-title" style="margin:0;">اللاعبون</span>
+            <span id="player-count-badge" class="player-count-badge">0 / 20</span>
+          </div>
+          <div id="player-list" class="player-list">
+            <p class="text-muted" style="font-size:0.9rem;">لم ينضم أحد بعد…</p>
+          </div>
+        </div>
+
+        <!-- Round controls (lobby phase only) -->
+        <div id="round-controls" class="card round-panel hidden">
+          <div class="section-title">إعداد الجولة</div>
+          <div class="form-group mb-8">
+            <label>اختر فئة</label>
+            <div class="preset-grid" id="preset-grid"></div>
+          </div>
+          <div class="form-group">
+            <label for="custom-category">أو اكتب فئة مخصصة</label>
+            <input id="custom-category" class="input" type="text"
+                   placeholder="مثال: أفلام ديزني" maxlength="40" autocomplete="off">
+          </div>
+          <div id="selected-category-display" class="hidden"
+               style="background:var(--surface-2);border:1px solid var(--accent);border-radius:8px;
+                      padding:10px 14px;text-align:center;font-weight:700;color:var(--accent);font-size:1.05rem;">
+          </div>
+          <button id="btn-start-round" class="btn btn-success w-full" disabled>ابدأ الجولة</button>
+          <p id="round-error" class="error-text"></p>
+        </div>
+
+      </div>
+
+      <!-- Adjudication panel (adjudication phase, full-width) -->
+      <div id="panel-adjudication" class="card adj-panel hidden">
+        <div class="adj-header">
+          <div>
+            <div class="section-title" style="margin:0;">
+              تحكيم — <span id="adj-category"></span>
+              <span style="color:var(--text-muted);font-weight:400;font-size:0.85rem;"> (جولة <span id="adj-round-num"></span>)</span>
+            </div>
+            <div class="adj-stats" id="adj-stats"></div>
+          </div>
+          <button id="btn-score-round" class="btn btn-primary">احتساب النقاط</button>
+        </div>
+        <input id="adj-search" class="adj-search" type="text"
+               placeholder="🔍  ابحث في الإجابات…" autocomplete="off">
+        <div id="adj-list" class="adj-list"></div>
+        <p class="text-muted" style="font-size:0.8rem;text-align:center;">
+          الافتراضي ✓ صحيح — اضغط على ✗ لرفض الإجابات الخاطئة فقط
+        </p>
+      </div>
+
+      <!-- Leaderboard panel (results phase, full-width) -->
+      <div id="panel-leaderboard" class="card lb-panel hidden">
+        <div class="lb-header">
+          <div class="section-title" style="margin:0;">
+            🏆 النتائج — الجولة <span id="lb-round-num"></span>
+          </div>
+          <div class="lb-actions">
+            <button id="btn-new-round" class="btn btn-primary btn-small">جولة جديدة</button>
+            <button id="btn-end-game" class="btn btn-secondary btn-small">إنهاء اللعبة</button>
+          </div>
+        </div>
+        <table class="leaderboard-table">
+          <thead>
+            <tr>
+              <th style="text-align:center;">#</th>
+              <th>الاسم</th>
+              <th style="text-align:center;">هذه الجولة</th>
+              <th style="text-align:center;">المجموع</th>
+            </tr>
+          </thead>
+          <tbody id="lb-tbody"></tbody>
+        </table>
+      </div>
+
+      <!-- Final panel (finished phase, full-width) -->
+      <div id="panel-final" class="card final-panel hidden">
+        <div class="final-title">🎉 انتهت اللعبة!</div>
+        <p class="final-subtitle">النتائج النهائية</p>
+
+        <div id="host-podium" class="podium-wrap"></div>
+
+        <div class="divider"></div>
+
+        <table class="leaderboard-table mt-16">
+          <thead>
+            <tr>
+              <th style="text-align:center;">#</th>
+              <th>الاسم</th>
+              <th style="text-align:center;">المجموع</th>
+            </tr>
+          </thead>
+          <tbody id="final-tbody"></tbody>
+        </table>
+
+        <div style="margin-top:24px;">
+          <button id="btn-new-game" class="btn btn-primary" style="padding:14px 32px;">
+            إنشاء غرفة جديدة
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+  <script src="/host.js"></script>
+</body>
+</html>

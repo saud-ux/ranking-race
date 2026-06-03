@@ -101,7 +101,11 @@ let state = {
   phase: 'no-room',
   selectedCategory: '',
   adjState: {},
+  adjMode: 'round',         // 'round' | 'duel' — which scorer the adjudication panel feeds
   prevPlayerCount: 0,
+  gulagPending: null,       // { playerId, nickname } awaiting a decision
+  duelBoxes: {},            // playerId → chips container element
+  duelTickInterval: null,
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -118,7 +122,8 @@ function showScreen(id) {
 function showHostPhase(phase) {
   state.phase = phase;
   const allPanels = ['panel-no-room','panel-room-info','panel-right',
-                     'panel-adjudication','panel-leaderboard','panel-final'];
+                     'panel-adjudication','panel-leaderboard','panel-final',
+                     'panel-duel','panel-duel-result'];
   allPanels.forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -139,7 +144,10 @@ function showHostPhase(phase) {
     case 'lobby':       show('panel-room-info'); show('panel-right'); show('round-controls'); break;
     case 'round':       show('panel-room-info'); show('panel-right'); break;
     case 'adjudication':show('panel-room-info'); show('panel-right'); show('panel-adjudication'); break;
+    case 'duel_adjudication': show('panel-room-info'); show('panel-right'); show('panel-adjudication'); break;
     case 'results':     show('panel-room-info'); show('panel-right'); show('panel-leaderboard'); break;
+    case 'duel':        show('panel-room-info'); show('panel-right'); show('panel-duel'); break;
+    case 'duel_result': show('panel-room-info'); show('panel-right'); show('panel-duel-result'); break;
     case 'finished':    show('panel-final'); break;
   }
 }
@@ -231,8 +239,25 @@ function tryRejoinRoom() {
 
     switch (res.phase) {
       case 'adjudication':
+        state.adjMode = 'round';
         if (res.adjGroups) renderAdjudicationPanel(res.adjGroups, res.adjCategory, res.roundNumber);
         showHostPhase('adjudication');
+        break;
+      case 'duel':
+        if (res.duelSpectate) {
+          enterHostDuel(res.duelSpectate.category, res.duelSpectate.endsAt, res.duelSpectate.players);
+          const ans = res.duelSpectate.answers || {};
+          Object.keys(ans).forEach(pid => (ans[pid] || []).forEach(a => addHostDuelChip(pid, a)));
+        } else showHostPhase('duel');
+        break;
+      case 'duel_adjudication':
+        state.adjMode = 'duel';
+        if (res.duelGroups) renderAdjudicationPanel(res.duelGroups.groups, `${res.duelGroups.category} ⚔️`, '—');
+        showHostPhase('duel_adjudication');
+        break;
+      case 'duel_result':
+        if (res.duelResult) renderDuelResult(res.duelResult);
+        showHostPhase('duel_result');
         break;
       case 'results':
         if (res.leaderboard) renderLeaderboard(res.leaderboard, res.roundNumber);
@@ -244,6 +269,11 @@ function tryRejoinRoom() {
         break;
       default:
         showHostPhase('lobby');
+    }
+
+    if (res.pendingGulag) {
+      state.gulagPending = { playerId: res.pendingGulag.playerId, nickname: res.pendingGulag.nickname };
+      renderGulagPrompt(res.pendingGulag);
     }
   });
 }
@@ -281,11 +311,14 @@ function renderPlayerList(players) {
   players.forEach((p, idx) => {
     const row = document.createElement('div');
     row.className = `player-row${p.connected ? '' : ' offline'}`;
+    if (p.status === 'out')   row.classList.add('player-out');
+    if (p.status === 'gulag') row.classList.add('player-gulag');
     row.style.setProperty('--row-delay', `${idx * 50}ms`);
     row.classList.add('lb-row-enter');
+    const badge = p.status === 'out' ? ' 💀' : p.status === 'gulag' ? ' ⛓️' : '';
     row.innerHTML = `
       <span class="${p.connected ? 'online-dot' : 'offline-dot'}"></span>
-      <span class="player-name">${escapeHtml(p.nickname)}</span>
+      <span class="player-name">${escapeHtml(p.nickname)}${badge}</span>
       <span class="text-muted" style="font-size:0.85rem;margin-inline-start:auto;margin-inline-end:8px;">${p.score ?? 0}</span>
       <button class="btn btn-danger btn-small" data-pid="${escapeHtml(p.playerId)}">طرد</button>
     `;
@@ -354,6 +387,7 @@ document.getElementById('btn-start-round').addEventListener('click', () => {
 
 socket.on('round:ended', ({ groups, category, roundNumber }) => {
   sfx.timeUp();
+  state.adjMode = 'round';
   renderAdjudicationPanel(groups, category, roundNumber);
   showHostPhase('adjudication');
 });
@@ -429,7 +463,8 @@ function updateAdjStats(groups) {
 document.getElementById('btn-score-round').addEventListener('click', () => {
   const decisions = Object.entries(state.adjState).map(([key, valid]) => ({ key, valid }));
   document.getElementById('btn-score-round').disabled = true;
-  socket.emit('host:score_round', { code: state.roomCode, decisions }, () => {
+  const event = state.adjMode === 'duel' ? 'host:score_duel' : 'host:score_round';
+  socket.emit(event, { code: state.roomCode, decisions }, () => {
     document.getElementById('btn-score-round').disabled = false;
   });
 });
@@ -478,6 +513,139 @@ document.getElementById('btn-new-round').addEventListener('click', () => {
 
 document.getElementById('btn-end-game').addEventListener('click', () => {
   socket.emit('host:end_game', { code: state.roomCode });
+});
+
+function resetRoundControls() {
+  state.selectedCategory = '';
+  document.getElementById('selected-category-display').classList.add('hidden');
+  document.getElementById('btn-start-round').disabled = true;
+  document.getElementById('custom-category').value = '';
+  document.getElementById('round-error').textContent = '';
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('selected'));
+}
+
+// ─── Gulag prompt modal ─────────────────────────────────────────────────────
+
+function showGulagModal(show) {
+  document.getElementById('gulag-modal').classList.toggle('hidden', !show);
+}
+
+function renderGulagPrompt({ nickname, willDuel, waitingNickname }) {
+  document.getElementById('gulag-modal-text').innerHTML = willDuel
+    ? `آخر لاعب بالترتيب: «${escapeHtml(nickname)}».<br>سينزل إلى الـ Gulag ويبارز «${escapeHtml(waitingNickname)}» مباشرةً ⚔️`
+    : `آخر لاعب بالترتيب: «${escapeHtml(nickname)}».<br>سينزل إلى الـ Gulag وينتظر خصمه القادم.`;
+  showGulagModal(true);
+}
+
+socket.on('gulag:prompt', (data) => {
+  state.gulagPending = { playerId: data.playerId, nickname: data.nickname };
+  renderGulagPrompt(data);
+  sfx.adjReject();
+});
+
+document.getElementById('btn-gulag-yes').addEventListener('click', () => {
+  socket.emit('host:gulag_decision', { code: state.roomCode, accept: true });
+  showGulagModal(false);
+  state.gulagPending = null;
+});
+document.getElementById('btn-gulag-no').addEventListener('click', () => {
+  socket.emit('host:gulag_decision', { code: state.roomCode, accept: false });
+  showGulagModal(false);
+  state.gulagPending = null;
+});
+
+// ─── Gulag duel (host: spectate, adjudicate, resolve) ───────────────────────
+
+function buildHostDuelBoxes(players) {
+  const wrap = document.getElementById('host-duel-boxes');
+  wrap.innerHTML = '';
+  state.duelBoxes = {};
+  (players || []).forEach(p => {
+    const box = document.createElement('div');
+    box.className = 'duel-box';
+    box.innerHTML = `<div class="duel-box-name">${escapeHtml(p.nickname)}</div><div class="duel-box-chips chips-area"></div>`;
+    wrap.appendChild(box);
+    state.duelBoxes[p.playerId] = box.querySelector('.duel-box-chips');
+  });
+}
+
+function addHostDuelChip(playerId, answer) {
+  const chips = state.duelBoxes[playerId];
+  if (!chips) return;
+  const chip = document.createElement('div');
+  chip.className = 'chip chip-new';
+  chip.textContent = answer;
+  chips.prepend(chip);
+}
+
+function startHostDuelCountdown(endsAt) {
+  clearInterval(state.duelTickInterval);
+  const el = document.getElementById('host-duel-countdown');
+  function tick() {
+    const rem = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+    el.textContent = rem;
+    el.classList.toggle('urgent', rem <= 10);
+    if (rem <= 0) clearInterval(state.duelTickInterval);
+  }
+  tick();
+  state.duelTickInterval = setInterval(tick, 250);
+}
+
+function enterHostDuel(category, endsAt, players) {
+  document.getElementById('host-duel-category').textContent = category;
+  buildHostDuelBoxes(players);
+  startHostDuelCountdown(endsAt);
+  showHostPhase('duel');
+  sfx.roundStart();
+}
+
+function renderDuelResult({ winnerNick, loserNick, champion }) {
+  document.getElementById('duel-result-banner').innerHTML =
+    `🏆 ${escapeHtml(winnerNick || '')} <span style="color:var(--text-muted);font-weight:400;">فاز على</span> ${escapeHtml(loserNick || '')}`;
+  document.getElementById('duel-result-detail').textContent = champion
+    ? 'لم يتبقَّ سوى لاعب واحد — جاهز للتتويج!'
+    : `${loserNick} يصبح متفرّجاً، و${winnerNick} يعود للمنافسة.`;
+  document.getElementById('btn-duel-continue').textContent = champion ? 'توّج البطل 🏆' : 'متابعة';
+}
+
+socket.on('duel:spectate_start', ({ category, endsAt, players }) => {
+  enterHostDuel(category, endsAt, players);
+});
+
+socket.on('duel:spectate_answer', ({ playerId, answer }) => addHostDuelChip(playerId, answer));
+
+socket.on('duel:tick', ({ remaining }) => {
+  if (state.phase !== 'duel') return;
+  const el = document.getElementById('host-duel-countdown');
+  el.textContent = remaining;
+  el.classList.toggle('urgent', remaining <= 10);
+});
+
+socket.on('duel:ended', ({ groups, category }) => {
+  clearInterval(state.duelTickInterval);
+  sfx.timeUp();
+  state.adjMode = 'duel';
+  renderAdjudicationPanel(groups, `${category} ⚔️`, '—');
+  showHostPhase('duel_adjudication');
+});
+
+socket.on('duel:result', (data) => {
+  renderDuelResult(data);
+  showHostPhase('duel_result');
+  sfx.scored();
+});
+
+document.getElementById('btn-duel-continue').addEventListener('click', () => {
+  const btn = document.getElementById('btn-duel-continue');
+  btn.disabled = true;
+  socket.emit('host:resume_lobby', { code: state.roomCode }, (res) => {
+    btn.disabled = false;
+    if (res?.ok && !res.finished) {
+      resetRoundControls();
+      showHostPhase('lobby');
+    }
+    // finished → the room-wide game:finished event renders the final screen
+  });
 });
 
 // ─── Final screen ─────────────────────────────────────────────────────────────

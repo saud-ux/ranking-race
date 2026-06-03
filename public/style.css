@@ -433,3 +433,89 @@ html, body {
 .items-center { align-items: center; }
 .gap-8  { gap: 8px; }
 .gap-12 { gap: 12px; }
+
+/* ═══ Gulag / 1v1 elimination ═══════════════════════════════════════════════ */
+
+/* Confirmation modal (host) */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(5, 5, 18, 0.78); backdrop-filter: blur(3px);
+  animation: modal-fade 0.2s ease;
+  padding: 16px;
+}
+@keyframes modal-fade { from { opacity: 0; } to { opacity: 1; } }
+.modal-card {
+  background: var(--surface); border: 1px solid var(--danger);
+  border-radius: var(--radius); padding: 28px 24px; text-align: center;
+  max-width: 420px; width: 100%;
+  box-shadow: 0 0 40px rgba(239, 68, 68, 0.25);
+  animation: modal-pop 0.25s cubic-bezier(0.2, 1.4, 0.5, 1);
+}
+@keyframes modal-pop { from { transform: scale(0.85); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.modal-emoji { font-size: 2.6rem; margin-bottom: 8px; }
+.modal-title { font-size: 1.3rem; font-weight: 900; color: var(--danger); margin-bottom: 10px; }
+.modal-text  { color: var(--text); line-height: 1.7; margin-bottom: 20px; }
+.modal-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+
+/* Player: sent to the gulag */
+.gulag-card { border-color: var(--danger); box-shadow: 0 0 30px rgba(239, 68, 68, 0.18); }
+
+/* Player: duel screen */
+.duel-card { border-color: var(--accent); box-shadow: 0 0 28px rgba(245, 158, 11, 0.2); }
+.duel-tag {
+  display: inline-block; font-weight: 900; font-size: 1.15rem; color: var(--accent);
+  margin-bottom: 6px; letter-spacing: 0.5px;
+}
+.duel-opponent { color: var(--danger); font-weight: 700; }
+
+/* Player + host: spectator status rows in the host list */
+.player-row.player-out   { opacity: 0.55; }
+.player-row.player-gulag { border-color: var(--danger); }
+
+/* Spectator live view */
+.spectate-banner {
+  font-size: 1.25rem; font-weight: 900; color: var(--accent); margin-bottom: 8px;
+}
+.spectate-grid {
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+.spec-box {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 10px; min-height: 70px;
+}
+.spec-box-name {
+  font-weight: 700; font-size: 0.9rem; color: var(--accent);
+  margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.spec-chips { display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-end; }
+.spec-chips .chip { font-size: 0.78rem; padding: 3px 8px; }
+
+/* Host: duel live panel */
+.duel-panel { border-color: var(--accent); }
+.duel-panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
+}
+.duel-countdown-badge {
+  font-size: 1.6rem; font-weight: 900; color: var(--accent);
+  background: var(--surface-2); border-radius: var(--radius-sm);
+  padding: 4px 16px; min-width: 56px; text-align: center;
+}
+.duel-countdown-badge.urgent { color: var(--danger); animation: countdown-pulse 0.9s ease-in-out infinite; }
+.duel-boxes { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; }
+.duel-box {
+  background: var(--surface-2); border: 1px solid var(--accent);
+  border-radius: var(--radius-sm); padding: 14px; min-height: 120px;
+}
+.duel-box-name { font-weight: 900; font-size: 1.05rem; color: var(--accent); margin-bottom: 10px; text-align: center; }
+
+/* Host: duel result */
+.duel-result-emoji { font-size: 2.8rem; }
+.duel-result-banner { font-size: 1.5rem; font-weight: 900; color: var(--accent); margin-top: 6px; }
+
+@media (max-width: 520px) {
+  .duel-boxes { grid-template-columns: 1fr; }
+}

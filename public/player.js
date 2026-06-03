@@ -98,10 +98,13 @@ let state = {
   roomCode: localStorage.getItem('roomCode'),
   nickname: localStorage.getItem('nickname'),
   phase: 'lobby',
+  status: 'active',          // 'active' | 'gulag' | 'out'
   roundEndsAt: null,
   tickInterval: null,
   myAnswers: [],
   lastTickSec: -1,
+  specTickInterval: null,    // countdown timer for the spectator view
+  specBoxes: {},             // playerId → chips container element
 };
 
 // ─── Screen / state helpers ───────────────────────────────────────────────────
@@ -112,9 +115,15 @@ function showScreen(id) {
 }
 
 function showGameState(name) {
-  ['waiting','round','ended','results','final'].forEach(n =>
+  ['waiting','round','ended','results','final',
+   'gulagWait','spectateIdle','duel','duelResult','spectate'].forEach(n =>
     document.getElementById(`state-${n}`).classList.toggle('hidden', n !== name)
   );
+}
+
+// Idle screen for a non-active player (between rounds), based on their status
+function showSpectatorIdle() {
+  showGameState(state.status === 'gulag' ? 'gulagWait' : 'spectateIdle');
 }
 
 function setConnectionStatus(status) {
@@ -146,6 +155,7 @@ function attemptJoin(code, nickname, playerId) {
     state.playerId = res.playerId;
     state.roomCode = code.toUpperCase();
     state.nickname = res.nickname;
+    state.status = res.status || 'active';
     localStorage.setItem('playerId', res.playerId);
     localStorage.setItem('roomCode', state.roomCode);
     localStorage.setItem('nickname', res.nickname);
@@ -153,16 +163,22 @@ function attemptJoin(code, nickname, playerId) {
     document.getElementById('display-nickname').textContent = res.nickname;
     showScreen('lobby');
 
-    if (res.phase === 'round' && res.roundInfo) {
+    if (res.duelInfo) {
+      enterDuel(res.duelInfo.category, res.duelInfo.endsAt, res.duelInfo.opponent, res.duelInfo.myAnswers || []);
+    } else if (res.spectateInfo) {
+      enterSpectate(res.spectateInfo);
+    } else if (res.phase === 'round' && res.roundInfo) {
       enterRound(res.roundInfo.category, res.roundInfo.endsAt, res.roundInfo.myAnswers || []);
+    } else if (res.phase === 'finished' && res.leaderboard) {
+      renderFinal(res.leaderboard);
+      showGameState('final');
+    } else if (state.status !== 'active') {
+      showSpectatorIdle();
     } else if (res.phase === 'adjudication') {
       showGameState('ended');
     } else if (res.phase === 'results' && res.leaderboard) {
       renderLeaderboard(res.leaderboard, res.roundNumber);
       showGameState('results');
-    } else if (res.phase === 'finished' && res.leaderboard) {
-      renderFinal(res.leaderboard);
-      showGameState('final');
     } else {
       showGameState('waiting');
     }
@@ -270,20 +286,29 @@ function submitAnswer() {
 }
 
 socket.on('player:answer_received', ({ answer }) => {
-  addChip(answer, true);
+  const area = state.phase === 'duel'
+    ? document.getElementById('duel-chips')
+    : document.getElementById('chips-area');
+  prependChip(area, answer, true);
   sfx.submit();
 });
 
-function addChip(text, animate = true) {
+function prependChip(container, text, animate = true) {
+  if (!container) return;
   const chip = document.createElement('div');
   chip.className = animate ? 'chip chip-new' : 'chip';
   chip.textContent = text;
-  document.getElementById('chips-area').prepend(chip);
+  container.prepend(chip);
+}
+
+function addChip(text, animate = true) {
+  prependChip(document.getElementById('chips-area'), text, animate);
 }
 
 // ─── Round events ─────────────────────────────────────────────────────────────
 
 socket.on('round:started', ({ category, endsAt }) => {
+  if (state.status !== 'active') return;   // spectators get spectate:round_start instead
   state.myAnswers = [];
   sfx.roundStart();
   enterRound(category, endsAt, []);
@@ -302,6 +327,7 @@ socket.on('round:tick', ({ remaining }) => {
 });
 
 socket.on('round:time_up', () => {
+  if (state.status !== 'active') return;
   clearInterval(state.tickInterval);
   state.phase = 'adjudication';
   sfx.timeUp();
@@ -313,7 +339,182 @@ socket.on('round:time_up', () => {
 socket.on('round:reset', () => {
   state.phase = 'lobby';
   clearInterval(state.tickInterval);
-  showGameState('waiting');
+  clearInterval(state.specTickInterval);
+  if (state.status !== 'active') showSpectatorIdle();
+  else showGameState('waiting');
+});
+
+// ─── Gulag & duel (player) ──────────────────────────────────────────────────
+
+socket.on('gulag:entered', () => {
+  state.status = 'gulag';
+  clearInterval(state.tickInterval);
+  sfx.badScore();
+  showGameState('gulagWait');   // a duel:started, if any, overrides immediately
+});
+
+function enterDuel(category, endsAt, opponent, existingAnswers) {
+  state.phase = 'duel';
+  state.roundEndsAt = endsAt;
+  state.lastTickSec = -1;
+  document.getElementById('duel-opponent').textContent = opponent || '—';
+  document.getElementById('duel-category').textContent = category;
+  const input = document.getElementById('duel-input');
+  input.value = ''; input.disabled = false;
+  document.getElementById('btn-duel-submit').disabled = false;
+  const chips = document.getElementById('duel-chips');
+  chips.innerHTML = '';
+  (existingAnswers || []).forEach(a => prependChip(chips, a, false));
+  showGameState('duel');
+  startDuelCountdown(endsAt);
+  input.focus();
+}
+
+socket.on('duel:started', ({ category, endsAt, opponent }) => {
+  state.status = 'gulag';
+  sfx.roundStart();
+  enterDuel(category, endsAt, opponent, []);
+});
+
+function startDuelCountdown(endsAt) {
+  clearInterval(state.tickInterval);
+  const el = document.getElementById('duel-countdown');
+  function tick() {
+    const rem = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+    el.textContent = rem;
+    el.classList.toggle('urgent', rem <= 10);
+    if (rem <= 0) clearInterval(state.tickInterval);
+  }
+  tick();
+  state.tickInterval = setInterval(tick, 250);
+}
+
+document.getElementById('btn-duel-submit').addEventListener('click', submitDuelAnswer);
+document.getElementById('duel-input').addEventListener('keydown', e => { if (e.key === 'Enter') submitDuelAnswer(); });
+
+function submitDuelAnswer() {
+  const input = document.getElementById('duel-input');
+  const answer = input.value.trim();
+  if (!answer || state.phase !== 'duel') return;
+  socket.emit('player:submit_answer', { code: state.roomCode, answer });
+  input.value = '';
+  input.focus();
+}
+
+socket.on('duel:tick', ({ remaining }) => {
+  const id = state.phase === 'duel' ? 'duel-countdown'
+           : state.phase === 'spectate' ? 'spectate-countdown' : null;
+  if (!id) return;
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = remaining;
+  el.classList.toggle('urgent', remaining <= 10);
+});
+
+socket.on('duel:time_up', () => {
+  if (state.phase === 'duel') {
+    clearInterval(state.tickInterval);
+    document.getElementById('duel-input').disabled = true;
+    document.getElementById('btn-duel-submit').disabled = true;
+    sfx.timeUp();
+  } else {
+    clearInterval(state.specTickInterval);
+  }
+});
+
+socket.on('duel:result', ({ winnerId, loserId, winnerNick, loserNick }) => {
+  if (winnerId === state.playerId) {
+    state.status = 'active';
+    document.getElementById('duel-result-emoji').textContent = '🎉';
+    const msg = document.getElementById('duel-result-msg');
+    msg.textContent = 'نجوت!'; msg.style.color = 'var(--success)';
+    document.getElementById('duel-result-sub').textContent = 'ترجع للمنافسة — استعدّ للجولة القادمة.';
+    showGameState('duelResult');
+    sfx.goodScore();
+  } else if (loserId === state.playerId) {
+    state.status = 'out';
+    document.getElementById('duel-result-emoji').textContent = '💀';
+    const msg = document.getElementById('duel-result-msg');
+    msg.textContent = 'خرجت من اللعبة'; msg.style.color = 'var(--danger)';
+    document.getElementById('duel-result-sub').textContent = 'بتتفرّج على الباقين لين تنتهي اللعبة 👀';
+    showGameState('duelResult');
+    sfx.badScore();
+  } else {
+    const banner = document.getElementById('spectate-banner');
+    if (banner) banner.textContent = `⚔️ ${winnerNick} فاز على ${loserNick}`;
+    clearInterval(state.specTickInterval);
+  }
+});
+
+// ─── Spectator live view ────────────────────────────────────────────────────
+
+function enterSpectate(info) {
+  state.phase = 'spectate';
+  clearInterval(state.tickInterval);
+  clearInterval(state.specTickInterval);
+  document.getElementById('spectate-banner').textContent =
+    info.isDuel ? '⚔️ مبارزة الـ Gulag' : '👀 أنت تتفرّج';
+  document.getElementById('spectate-category').textContent = info.category || '';
+  buildSpectateGrid(info.players || []);
+  if (info.answers) {
+    for (const pid of Object.keys(info.answers)) {
+      (info.answers[pid] || []).forEach(a => addSpectateChip(pid, a, false));
+    }
+  }
+  startSpectateCountdown(info.endsAt);
+  showGameState('spectate');
+}
+
+function buildSpectateGrid(players) {
+  const grid = document.getElementById('spectate-grid');
+  grid.innerHTML = '';
+  state.specBoxes = {};
+  players.forEach(p => {
+    const box = document.createElement('div');
+    box.className = 'spec-box';
+    box.innerHTML = `<div class="spec-box-name">${escapeHtml(p.nickname)}</div><div class="spec-chips"></div>`;
+    grid.appendChild(box);
+    state.specBoxes[p.playerId] = box.querySelector('.spec-chips');
+  });
+}
+
+function addSpectateChip(playerId, answer, animate = true) {
+  prependChip(state.specBoxes[playerId], answer, animate);
+}
+
+function startSpectateCountdown(endsAt) {
+  clearInterval(state.specTickInterval);
+  const el = document.getElementById('spectate-countdown');
+  if (!endsAt) { el.textContent = ''; return; }
+  function tick() {
+    const rem = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+    el.textContent = rem;
+    el.classList.toggle('urgent', rem <= 10);
+    if (rem <= 0) clearInterval(state.specTickInterval);
+  }
+  tick();
+  state.specTickInterval = setInterval(tick, 250);
+}
+
+socket.on('spectate:round_start', (info) => {
+  if (state.status === 'active') return;
+  enterSpectate({ ...info, isDuel: false });
+});
+
+socket.on('duel:spectate_start', (info) => {
+  enterSpectate({ ...info, isDuel: true });
+});
+
+socket.on('spectate:answer', ({ playerId, answer }) => {
+  if (state.phase === 'spectate') addSpectateChip(playerId, answer, true);
+});
+
+socket.on('duel:spectate_answer', ({ playerId, answer }) => {
+  if (state.phase === 'spectate') addSpectateChip(playerId, answer, true);
+});
+
+socket.on('spectate:round_end', () => {
+  clearInterval(state.specTickInterval);
 });
 
 // ─── Results / leaderboard ────────────────────────────────────────────────────

@@ -102,6 +102,61 @@
       </div>
     </div>
 
+    <!-- Sent to the gulag, waiting for an opponent -->
+    <div id="state-gulagWait" class="hidden">
+      <div class="card lobby-card gulag-card" style="text-align:center;">
+        <p style="font-size:2.8rem;">⛓️</p>
+        <div class="round-ended-msg" style="color:var(--danger);">سقطت إلى الـ Gulag!</div>
+        <p class="text-muted mt-8">تنتظر خصماً… الفائز يرجع للمنافسة ⚔️</p>
+      </div>
+    </div>
+
+    <!-- Eliminated spectator, between rounds -->
+    <div id="state-spectateIdle" class="hidden">
+      <div class="card lobby-card" style="text-align:center;">
+        <p style="font-size:2.4rem;">👀</p>
+        <div class="round-ended-msg">أنت متفرّج الآن</div>
+        <p class="text-muted mt-8">في انتظار الجولة القادمة…</p>
+      </div>
+    </div>
+
+    <!-- Gulag duel — playing -->
+    <div id="state-duel" class="hidden" style="padding:16px;max-width:520px;width:100%;margin:0 auto;">
+      <div class="card mb-16 duel-card" style="text-align:center;">
+        <div class="duel-tag">⚔️ مبارزة الـ Gulag</div>
+        <p class="text-muted mb-4" style="font-size:0.85rem;">ضد <span id="duel-opponent" class="duel-opponent"></span></p>
+        <div id="duel-category" class="category-display"></div>
+        <div id="duel-countdown" class="countdown">20</div>
+      </div>
+      <div class="card">
+        <div class="answer-input-wrap">
+          <input id="duel-input" class="input" type="text" placeholder="اكتب إجابة واضغط إدخال…"
+                 autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+          <button id="btn-duel-submit" class="btn btn-primary">إرسال</button>
+        </div>
+        <div id="duel-chips" class="chips-area"></div>
+      </div>
+    </div>
+
+    <!-- Gulag duel — result for a duelist -->
+    <div id="state-duelResult" class="hidden">
+      <div class="card lobby-card" style="text-align:center;">
+        <p id="duel-result-emoji" style="font-size:3rem;"></p>
+        <div id="duel-result-msg" class="round-ended-msg"></div>
+        <p id="duel-result-sub" class="text-muted mt-8"></p>
+      </div>
+    </div>
+
+    <!-- Spectator live view (main round or duel) -->
+    <div id="state-spectate" class="hidden" style="padding:12px;width:100%;max-width:820px;margin:0 auto;">
+      <div class="card mb-16" style="text-align:center;">
+        <div id="spectate-banner" class="spectate-banner">👀 أنت تتفرّج</div>
+        <div id="spectate-category" class="category-display"></div>
+        <div id="spectate-countdown" class="countdown"></div>
+      </div>
+      <div id="spectate-grid" class="spectate-grid"></div>
+    </div>
+
     <!-- Final screen -->
     <div id="state-final" class="hidden">
       <div class="card results-card" style="text-align:center;">

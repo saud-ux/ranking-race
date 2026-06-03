@@ -10,9 +10,17 @@ const HOST_KEY = process.env.HOST_KEY || 'host123';
 const ROOM_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no O, 0, I, 1
 const ROOM_CODE_LENGTH = 4;
 const ROOM_CAP = 20;
-const ROUND_SECONDS = 30;
+const ROUND_SECONDS = Number(process.env.ROUND_SECONDS) || 30;
 const HOST_GRACE_MS = 10 * 60 * 1000;
 const GC_INTERVAL_MS = 60 * 1000;
+
+// ─── Gulag (1v1 elimination) tuning ───────────────────────────────────────────
+const DUEL_SECONDS = Number(process.env.DUEL_SECONDS) || 20;  // length of a gulag duel
+const GULAG_FAST_THRESHOLD = 6;     // > this many active players ⇒ a drop every round
+const GULAG_CADENCE_SLOW = 2;       // otherwise, a drop every N main rounds
+const DUEL_CATEGORIES = [
+  'فواكه','خضار','دول','حيوانات','أكلات','ألوان','مهن','مدن سعودية',
+];
 
 // ─── Arabic normalization (§8) ────────────────────────────────────────────────
 //
@@ -117,6 +125,28 @@ function buildLeaderboard(room, roundScores) {
     .map((p, i) => ({ ...p, rank: i + 1 }));
 }
 
+// Final standings for a gulag game: champion first, then knock-outs newest → oldest
+function buildGulagFinal(room) {
+  const champ = activePlayers(room);
+  const order = [
+    ...champ.map(p => p.playerId),                 // survivor(s) on top
+    ...[...room.eliminationOrder].reverse(),       // last eliminated ranks higher
+    ...(room.gulagWaiting ? [room.gulagWaiting] : []),
+  ];
+  const seen = new Set();
+  return order
+    .filter(id => !seen.has(id) && seen.add(id) && room.players.has(id))
+    .map((id, i) => {
+      const p = room.players.get(id);
+      return {
+        playerId: id,
+        nickname: p.nickname,
+        totalScore: room.scores.get(id) ?? 0,
+        rank: i + 1,
+      };
+    });
+}
+
 // ─── Express + Socket.IO ──────────────────────────────────────────────────────
 
 const app = express();
@@ -143,6 +173,7 @@ function playerListPayload(room) {
     playerId: p.playerId,
     nickname: p.nickname,
     connected: p.connected,
+    status: p.status,
     score: room.scores.get(p.playerId) ?? 0,
   }));
 }
@@ -154,6 +185,215 @@ function broadcastPlayerList(room) {
 
 function emitToRoom(room, event, data) {
   io.to(`room:${room.code}`).emit(event, data);
+}
+
+// ─── Gulag helpers ─────────────────────────────────────────────────────────────
+
+function hostSock(room) {
+  return room.hostSocketId ? io.sockets.sockets.get(room.hostSocketId) : null;
+}
+
+function activePlayers(room) {
+  return [...room.players.values()].filter(p => p.status === 'active');
+}
+
+function emitToPlayers(room, playerIds, event, data) {
+  for (const id of playerIds) {
+    const p = room.players.get(id);
+    const s = p?.socketId ? io.sockets.sockets.get(p.socketId) : null;
+    if (s) s.emit(event, data);
+  }
+}
+
+// Spectators during a MAIN round = anyone in the gulag or knocked out (+ host)
+function emitToSpectators(room, event, data) {
+  const ids = [...room.players.values()]
+    .filter(p => p.status === 'gulag' || p.status === 'out')
+    .map(p => p.playerId);
+  emitToPlayers(room, ids, event, data);
+  hostSock(room)?.emit(event, data);
+}
+
+// Audience of a DUEL = everyone except the two duelers (+ host)
+function emitToDuelAudience(room, event, data) {
+  const duelers = new Set(room.duel?.players || []);
+  const ids = [...room.players.values()]
+    .filter(p => !duelers.has(p.playerId))
+    .map(p => p.playerId);
+  emitToPlayers(room, ids, event, data);
+  hostSock(room)?.emit(event, data);
+}
+
+// {playerId, nickname} for every active player — used to build spectator boxes
+function activeRoster(room) {
+  return activePlayers(room).map(p => ({ playerId: p.playerId, nickname: p.nickname }));
+}
+
+function answersToObject(answersMap) {
+  const out = {};
+  for (const [pid, arr] of answersMap) out[pid] = [...arr];
+  return out;
+}
+
+// Snapshot a spectator needs to rebuild their live view after a reconnect
+function buildSpectateInfo(room) {
+  if (room.phase === 'round') {
+    return {
+      isDuel: false, category: room.round.category, endsAt: room.round.endsAt,
+      roundNumber: room.roundNumber, players: activeRoster(room),
+      answers: answersToObject(room.round.answers),
+    };
+  }
+  if (room.phase === 'duel') {
+    const [a, b] = room.duel.players;
+    return {
+      isDuel: true, category: room.duel.category, endsAt: room.duel.endsAt,
+      players: [
+        { playerId: a, nickname: room.players.get(a)?.nickname },
+        { playerId: b, nickname: room.players.get(b)?.nickname },
+      ],
+      answers: answersToObject(room.duel.answers),
+    };
+  }
+  return null;
+}
+
+// Snapshot for a duelist reconnecting mid-duel
+function buildDuelInfo(room, playerId) {
+  if (room.phase !== 'duel' || !room.duel.players.includes(playerId)) return null;
+  const oppId = room.duel.players.find(id => id !== playerId);
+  return {
+    category: room.duel.category, endsAt: room.duel.endsAt,
+    opponent: room.players.get(oppId)?.nickname,
+    myAnswers: [...(room.duel.answers.get(playerId) || [])],
+  };
+}
+
+// Lowest-ranked active player: fewest total points, then fewest this-round points
+function lastPlaceActive(room, roundScores) {
+  const active = activePlayers(room);
+  if (!active.length) return null;
+  return active
+    .map(p => ({
+      p,
+      total: room.scores.get(p.playerId) ?? 0,
+      round: roundScores?.get(p.playerId) ?? 0,
+    }))
+    .sort((a, b) => a.total - b.total || a.round - b.round)[0].p;
+}
+
+// Players still in contention (anyone not knocked out)
+function inContention(room) {
+  return [...room.players.values()].filter(p => p.status !== 'out');
+}
+
+// After a scored main round, decide whether to propose sending someone to the gulag
+function maybeProposeGulag(room, roundScores) {
+  const active = activePlayers(room);
+  if (inContention(room).length <= 1) return;   // a champion already remains
+  if (active.length < 1) return;
+
+  // Normally we need ≥2 active to keep the game going. But if only one active
+  // player is left while someone waits in the gulag, force the deciding duel.
+  const forceFinal = active.length === 1 && room.gulagWaiting !== null;
+  if (active.length < 2 && !forceFinal) return;
+
+  room.roundsSinceGulag += 1;
+  const cadence = active.length > GULAG_FAST_THRESHOLD ? 1 : GULAG_CADENCE_SLOW;
+  if (!forceFinal && room.roundsSinceGulag < cadence) return;
+
+  const target = lastPlaceActive(room, roundScores);
+  if (!target) return;
+  room.pendingGulag = target.playerId;
+  hostSock(room)?.emit('gulag:prompt', {
+    playerId: target.playerId,
+    nickname: target.nickname,
+    willDuel: room.gulagWaiting !== null,   // true ⇒ accepting starts a duel immediately
+    waitingNickname: room.gulagWaiting ? room.players.get(room.gulagWaiting)?.nickname : null,
+  });
+}
+
+// ─── Duel lifecycle ────────────────────────────────────────────────────────────
+
+function startDuel(room, p1Id, p2Id) {
+  const p1 = room.players.get(p1Id), p2 = room.players.get(p2Id);
+  if (!p1 || !p2) return;
+  const category = DUEL_CATEGORIES[Math.floor(Math.random() * DUEL_CATEGORIES.length)];
+  const endsAt = Date.now() + DUEL_SECONDS * 1000;
+  room.phase = 'duel';
+  room.duel = {
+    players: [p1Id, p2Id], category, startedAt: Date.now(), endsAt,
+    answers: new Map(), scored: false, groupResult: null, result: null,
+  };
+
+  emitToPlayers(room, [p1Id], 'duel:started',
+    { category, endsAt, opponent: p2.nickname });
+  emitToPlayers(room, [p2Id], 'duel:started',
+    { category, endsAt, opponent: p1.nickname });
+  emitToDuelAudience(room, 'duel:spectate_start', {
+    category, endsAt,
+    players: [{ playerId: p1Id, nickname: p1.nickname }, { playerId: p2Id, nickname: p2.nickname }],
+  });
+
+  room.duel.timer = setTimeout(() => endDuel(room), DUEL_SECONDS * 1000);
+  let remaining = DUEL_SECONDS;
+  room.duel.tickInterval = setInterval(() => {
+    remaining -= 1;
+    emitToRoom(room, 'duel:tick', { remaining });
+    if (remaining <= 0) clearInterval(room.duel.tickInterval);
+  }, 1000);
+}
+
+function endDuel(room) {
+  if (room.phase !== 'duel') return;
+  clearInterval(room.duel.tickInterval);
+  clearTimeout(room.duel.timer);
+  room.phase = 'duel_adjudication';
+
+  const { groups, perPlayerDeduped } = groupAnswers(room.duel);
+  room.duel.groupResult = { groups, perPlayerDeduped };
+
+  const [p1Id, p2Id] = room.duel.players;
+  hostSock(room)?.emit('duel:ended', {
+    groups,
+    category: room.duel.category,
+    players: [
+      { playerId: p1Id, nickname: room.players.get(p1Id)?.nickname },
+      { playerId: p2Id, nickname: room.players.get(p2Id)?.nickname },
+    ],
+  });
+  emitToRoom(room, 'duel:time_up', {});
+}
+
+// Tally a duel from the host's validity decisions and resolve a winner
+function resolveDuel(room, adjMap) {
+  const { groups, perPlayerDeduped } = room.duel.groupResult;
+  const groupInfo = new Map(
+    groups.map(g => [g.key, { valid: adjMap.get(g.key) !== false, playerCount: g.playerCount }])
+  );
+  const tally = new Map(); // playerId → { score, valid }
+  for (const [playerId, answers] of perPlayerDeduped) {
+    let score = 0, valid = 0;
+    for (const { key } of answers) {
+      const info = groupInfo.get(key);
+      if (!info) continue;
+      if (!info.valid)                { score -= 1; }
+      else if (info.playerCount === 1) { score += 2; valid += 1; }
+      else                             { score += 1; valid += 1; }
+    }
+    tally.set(playerId, { score, valid });
+  }
+
+  const [p1Id, p2Id] = room.duel.players;
+  const a = tally.get(p1Id) || { score: 0, valid: 0 };
+  const b = tally.get(p2Id) || { score: 0, valid: 0 };
+  let winnerId, loserId;
+  if (a.score !== b.score)        { winnerId = a.score > b.score ? p1Id : p2Id; }
+  else if (a.valid !== b.valid)   { winnerId = a.valid > b.valid ? p1Id : p2Id; }
+  else                            { winnerId = Math.random() < 0.5 ? p1Id : p2Id; } // dead tie → coin flip
+  loserId = winnerId === p1Id ? p2Id : p1Id;
+
+  return { winnerId, loserId, scores: { [p1Id]: a.score, [p2Id]: b.score } };
 }
 
 // ─── Round end ────────────────────────────────────────────────────────────────
@@ -177,6 +417,7 @@ function endRound(room) {
   }
 
   emitToRoom(room, 'round:time_up', {});
+  emitToSpectators(room, 'spectate:round_end', {});
 }
 
 // ─── GC: collect stale rooms ──────────────────────────────────────────────────
@@ -219,6 +460,12 @@ io.on('connection', (socket) => {
       round: null,
       roundNumber: 0,
       scores: new Map(),
+      // ── Gulag state ──
+      gulagWaiting: null,      // playerId currently waiting in the gulag for an opponent
+      pendingGulag: null,      // playerId proposed for the gulag, awaiting host decision
+      roundsSinceGulag: 0,     // main rounds elapsed since the last drop
+      eliminationOrder: [],    // playerIds in the order they were knocked out
+      duel: null,              // active duel state, see startDuel()
     });
     socket.join(`room:${code}`);
     socket.data.isHost = true;
@@ -237,6 +484,15 @@ io.on('connection', (socket) => {
     socket.data.isHost = true;
     socket.data.hostRoomCode = code;
 
+    const isGulagGame = room.eliminationOrder.length > 0 || room.gulagWaiting !== null;
+    let duelPlayers = null;
+    if (room.duel) {
+      const [a, b] = room.duel.players;
+      duelPlayers = [
+        { playerId: a, nickname: room.players.get(a)?.nickname },
+        { playerId: b, nickname: room.players.get(b)?.nickname },
+      ];
+    }
     cb({
       ok: true,
       players: playerListPayload(room),
@@ -244,7 +500,29 @@ io.on('connection', (socket) => {
       roundNumber: room.roundNumber,
       adjGroups: room.phase === 'adjudication' ? room.round?.groupResult?.groups : null,
       adjCategory: room.phase === 'adjudication' ? room.round?.category : null,
-      leaderboard: ['results', 'finished'].includes(room.phase) ? buildLeaderboard(room, new Map()) : null,
+      leaderboard: ['results', 'finished'].includes(room.phase)
+        ? (room.phase === 'finished' && isGulagGame ? buildGulagFinal(room) : buildLeaderboard(room, new Map()))
+        : null,
+      // ── Gulag / duel restoration ──
+      pendingGulag: room.pendingGulag ? {
+        playerId: room.pendingGulag,
+        nickname: room.players.get(room.pendingGulag)?.nickname,
+        willDuel: room.gulagWaiting !== null,
+        waitingNickname: room.gulagWaiting ? room.players.get(room.gulagWaiting)?.nickname : null,
+      } : null,
+      duelSpectate: room.phase === 'duel'
+        ? { category: room.duel.category, endsAt: room.duel.endsAt, players: duelPlayers, answers: answersToObject(room.duel.answers) }
+        : null,
+      duelGroups: room.phase === 'duel_adjudication'
+        ? { groups: room.duel.groupResult?.groups, category: room.duel.category, players: duelPlayers }
+        : null,
+      duelResult: room.phase === 'duel_result' && room.duel?.result ? {
+        winnerId: room.duel.result.winnerId,
+        loserId: room.duel.result.loserId,
+        winnerNick: room.players.get(room.duel.result.winnerId)?.nickname,
+        loserNick: room.players.get(room.duel.result.loserId)?.nickname,
+        champion: activePlayers(room).length <= 1,
+      } : null,
     });
   });
 
@@ -257,6 +535,8 @@ io.on('connection', (socket) => {
     room.kickedIds.add(playerId);
     room.players.delete(playerId);
     room.scores.delete(playerId);
+    if (room.gulagWaiting === playerId) room.gulagWaiting = null;
+    if (room.pendingGulag === playerId) room.pendingGulag = null;
     const s = io.sockets.sockets.get(player.socketId);
     if (s) { s.emit('player:kicked'); s.leave(`room:${code}`); }
     broadcastPlayerList(room);
@@ -274,6 +554,8 @@ io.on('connection', (socket) => {
     room.round = { category, startedAt: Date.now(), endsAt, answers: new Map(), scored: false, groupResult: null };
 
     emitToRoom(room, 'round:started', { category, endsAt, roundNumber: room.roundNumber });
+    emitToSpectators(room, 'spectate:round_start',
+      { category, endsAt, roundNumber: room.roundNumber, players: activeRoster(room) });
 
     room.round.timer = setTimeout(() => endRound(room), ROUND_SECONDS * 1000);
     let remaining = ROUND_SECONDS;
@@ -302,7 +584,86 @@ io.on('connection', (socket) => {
     const leaderboard = buildLeaderboard(room, roundScores);
     emitToRoom(room, 'round:results', { leaderboard, roundNumber: room.roundNumber });
     broadcastPlayerList(room);
+    maybeProposeGulag(room, roundScores);
     cb?.({ ok: true, leaderboard });
+  });
+
+  // HOST: respond to a gulag proposal (accept = send the player down)
+  socket.on('host:gulag_decision', ({ code, accept }, cb) => {
+    const room = rooms.get(code);
+    if (!room || room.hostSocketId !== socket.id) return cb?.({ ok: false });
+    const targetId = room.pendingGulag;
+    room.pendingGulag = null;
+    room.roundsSinceGulag = 0;
+    if (!accept || !targetId) return cb?.({ ok: true, accepted: false });
+
+    const target = room.players.get(targetId);
+    if (!target || target.status !== 'active') return cb?.({ ok: true, accepted: false });
+    target.status = 'gulag';
+    broadcastPlayerList(room);
+
+    if (room.gulagWaiting === null) {
+      // First one down — wait for an opponent
+      room.gulagWaiting = targetId;
+      emitToPlayers(room, [targetId], 'gulag:entered', { waiting: true });
+      cb?.({ ok: true, accepted: true, duel: false });
+    } else {
+      // Someone is already waiting — start the duel
+      const opponentId = room.gulagWaiting;
+      room.gulagWaiting = null;
+      emitToPlayers(room, [targetId], 'gulag:entered', { waiting: false });
+      startDuel(room, opponentId, targetId);
+      cb?.({ ok: true, accepted: true, duel: true });
+    }
+  });
+
+  // HOST: score a duel and resolve the winner
+  socket.on('host:score_duel', ({ code, decisions }, cb) => {
+    const room = rooms.get(code);
+    if (!room || room.hostSocketId !== socket.id) return cb?.({ ok: false });
+    if (room.phase !== 'duel_adjudication') return cb?.({ ok: false, error: 'ليس وقت الاحتساب' });
+    if (room.duel.scored) return cb?.({ ok: true, alreadyScored: true });
+    room.duel.scored = true;
+
+    const adjMap = new Map((decisions || []).map(d => [d.key, d.valid]));
+    const { winnerId, loserId, scores } = resolveDuel(room, adjMap);
+    room.duel.result = { winnerId, loserId };
+
+    const winner = room.players.get(winnerId);
+    const loser  = room.players.get(loserId);
+    if (winner) winner.status = 'active';
+    if (loser)  { loser.status = 'out'; room.eliminationOrder.push(loserId); }
+    room.phase = 'duel_result';
+    broadcastPlayerList(room);
+
+    // Last player standing? Champion → game over.
+    const champion = activePlayers(room).length <= 1;
+    const payload = {
+      winnerId, loserId,
+      winnerNick: winner?.nickname, loserNick: loser?.nickname,
+      scores, champion,
+    };
+    emitToRoom(room, 'duel:result', payload);
+    cb?.({ ok: true, ...payload });
+  });
+
+  // HOST: leave the duel result screen — either crown the champion or resume play
+  socket.on('host:resume_lobby', ({ code }, cb) => {
+    const room = rooms.get(code);
+    if (!room || room.hostSocketId !== socket.id) return cb?.({ ok: false });
+    if (room.phase !== 'duel_result') return cb?.({ ok: false });
+    room.duel = null;
+
+    const active = activePlayers(room);
+    if (active.length <= 1) {
+      room.phase = 'finished';
+      const leaderboard = buildGulagFinal(room);
+      emitToRoom(room, 'game:finished', { leaderboard });
+      return cb?.({ ok: true, finished: true, leaderboard });
+    }
+    room.phase = 'lobby';
+    emitToRoom(room, 'round:reset', {});
+    cb?.({ ok: true, finished: false });
   });
 
   // HOST: reset to lobby for new round
@@ -329,15 +690,27 @@ io.on('connection', (socket) => {
   // PLAYER: submit answer during round
   socket.on('player:submit_answer', ({ code, answer }) => {
     const room = rooms.get(code);
-    if (!room || room.phase !== 'round') return;
-    if (Date.now() > room.round.endsAt) return; // late — silently drop
+    if (!room) return;
     const playerId = socket.data.playerId;
-    if (!playerId || !room.players.has(playerId)) return;
+    const player = playerId ? room.players.get(playerId) : null;
+    if (!player) return;
     const t = (answer || '').trim();
     if (!t) return;
-    if (!room.round.answers.has(playerId)) room.round.answers.set(playerId, []);
-    room.round.answers.get(playerId).push(t);
-    socket.emit('player:answer_received', { answer: t });
+
+    if (room.phase === 'round' && player.status === 'active') {
+      if (Date.now() > room.round.endsAt) return;                   // late — silently drop
+      if (!room.round.answers.has(playerId)) room.round.answers.set(playerId, []);
+      room.round.answers.get(playerId).push(t);
+      socket.emit('player:answer_received', { answer: t });
+      // Live feed to the gulag/knocked-out spectators (never to active rivals)
+      emitToSpectators(room, 'spectate:answer', { playerId, nickname: player.nickname, answer: t });
+    } else if (room.phase === 'duel' && room.duel.players.includes(playerId)) {
+      if (Date.now() > room.duel.endsAt) return;
+      if (!room.duel.answers.has(playerId)) room.duel.answers.set(playerId, []);
+      room.duel.answers.get(playerId).push(t);
+      socket.emit('player:answer_received', { answer: t });
+      emitToDuelAudience(room, 'duel:spectate_answer', { playerId, nickname: player.nickname, answer: t });
+    }
   });
 
   // PLAYER: join / reconnect
@@ -356,19 +729,27 @@ io.on('connection', (socket) => {
       socket.data.playerId = playerId;
       socket.data.roomCode = upperCode;
       broadcastPlayerList(room);
+      const isDueler = room.phase === 'duel' && room.duel.players.includes(playerId);
+      const isSpectator = player.status === 'gulag' || player.status === 'out';
       return cb({
         ok: true,
         playerId,
         nickname: player.nickname,
+        status: player.status,
         phase: room.phase,
-        roundInfo: room.phase === 'round' ? {
+        roundInfo: (room.phase === 'round' && player.status === 'active') ? {
           category: room.round.category,
           endsAt: room.round.endsAt,
           roundNumber: room.roundNumber,
           myAnswers: room.round.answers.get(playerId) || [],
         } : null,
+        duelInfo: isDueler ? buildDuelInfo(room, playerId) : null,
+        spectateInfo: (isSpectator && (room.phase === 'round' || room.phase === 'duel'))
+          ? buildSpectateInfo(room) : null,
         leaderboard: ['results', 'finished'].includes(room.phase)
-          ? buildLeaderboard(room, new Map()) : null,
+          ? (room.phase === 'finished' && (room.eliminationOrder.length > 0 || room.gulagWaiting !== null)
+              ? buildGulagFinal(room) : buildLeaderboard(room, new Map()))
+          : null,
         roundNumber: room.roundNumber,
       });
     }
@@ -387,14 +768,14 @@ io.on('connection', (socket) => {
     }
 
     const newId = randomUUID();
-    room.players.set(newId, { playerId: newId, nickname: nick, socketId: socket.id, connected: true });
+    room.players.set(newId, { playerId: newId, nickname: nick, socketId: socket.id, connected: true, status: 'active' });
     room.scores.set(newId, 0);
     socket.join(`room:${upperCode}`);
     socket.data.playerId = newId;
     socket.data.roomCode = upperCode;
     broadcastPlayerList(room);
 
-    cb({ ok: true, playerId: newId, nickname: nick, phase: room.phase, roundInfo: null, leaderboard: null });
+    cb({ ok: true, playerId: newId, nickname: nick, status: 'active', phase: room.phase, roundInfo: null, leaderboard: null });
   });
 
   // Disconnect

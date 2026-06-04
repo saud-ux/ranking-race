@@ -3,8 +3,14 @@
 const socket = io();
 
 const PRESETS = [
-  'فواكه','خضار','دول','مدن سعودية','أسماء أولاد','أسماء بنات',
-  'حيوانات','ماركات سيارات','أكلات','لاعبين كرة قدم','مهن','ألوان',
+  // الطعام والطبيعة
+  'فواكه','خضار','أكلات','حلويات','مشروبات','بهارات','حيوانات','طيور','أسماك','نباتات','أشجار','زهور',
+  // الناس والأماكن
+  'دول','عواصم','مدن سعودية','مدن عربية','أنهار','جبال','بحار',
+  'أسماء أولاد','أسماء بنات','مهن','رياضات','لاعبين كرة قدم','أندية كرة قدم',
+  // أشياء وعلامات
+  'ألوان','ماركات سيارات','ماركات جوالات','شركات','تطبيقات','أفلام','مسلسلات','برامج تلفزيونية',
+  'آلات موسيقية','أدوات مطبخ','ملابس','أثاث منزل','وسائل نقل','مواد دراسية','لغات','كواكب',
 ];
 
 // ─── Audio engine ─────────────────────────────────────────────────────────────
@@ -106,12 +112,27 @@ let state = {
   gulagPending: null,       // { playerId, nickname } awaiting a decision
   duelBoxes: {},            // playerId → chips container element
   duelTickInterval: null,
+  config: { mode: 'solo', roundSeconds: 30, duelSeconds: 20, teamCount: 2, teams: [] },
+  chatOpen: false,
+  chatUnread: 0,
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function escapeHtml(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Avatar chip markup (image data-URL or emoji/text fallback)
+function avatarHTML(avatar, extraClass = '') {
+  const cls = `avatar-chip ${extraClass}`.trim();
+  if (avatar && avatar.startsWith('data:image/'))
+    return `<span class="${cls}"><img src="${escapeHtml(avatar)}" alt=""></span>`;
+  return `<span class="${cls}">${escapeHtml(avatar || '🙂')}</span>`;
+}
+
+function teamColor(teamId) {
+  return (state.config.teams || []).find(t => t.id === teamId)?.color || null;
 }
 
 function showScreen(id) {
@@ -219,6 +240,8 @@ document.getElementById('btn-create-room').addEventListener('click', () => {
       state.roomCode = res.code;
       localStorage.setItem('hostRoomCode', res.code);
       setupRoomView(res.code);
+      applyConfigToControls({ mode: 'solo', roundSeconds: 30, duelSeconds: 20, teamCount: 2, teams: [] });
+      loadChatHistory([]);
       showHostPhase('lobby');
     }
   });
@@ -235,6 +258,8 @@ function tryRejoinRoom() {
       return;
     }
     setupRoomView(state.roomCode);
+    if (res.config) applyConfigToControls(res.config);
+    if (res.chat) loadChatHistory(res.chat);
     renderPlayerList(res.players);
 
     switch (res.phase) {
@@ -261,10 +286,12 @@ function tryRejoinRoom() {
         break;
       case 'results':
         if (res.leaderboard) renderLeaderboard(res.leaderboard, res.roundNumber);
+        renderTeamStandings('lb-team-standings', res.teamLeaderboard);
         showHostPhase('results');
         break;
       case 'finished':
         if (res.leaderboard) renderFinal(res.leaderboard);
+        renderTeamStandings('final-team-standings', res.teamLeaderboard);
         showHostPhase('finished');
         break;
       default:
@@ -298,6 +325,13 @@ function renderPlayerList(players) {
   const badge = document.getElementById('player-count-badge');
   badge.textContent = `${players.length} / 20`;
 
+  // Ready summary (shown in the lobby)
+  const readyBadge = document.getElementById('ready-badge');
+  const readyCount = players.filter(p => p.ready).length;
+  const showReady = state.phase === 'lobby' && players.length > 0;
+  readyBadge.classList.toggle('hidden', !showReady);
+  if (showReady) readyBadge.textContent = `✅ ${readyCount}/${players.length}`;
+
   // Play join sound when count increases
   if (players.length > state.prevPlayerCount) sfx.playerJoin();
   state.prevPlayerCount = players.length;
@@ -313,12 +347,19 @@ function renderPlayerList(players) {
     row.className = `player-row${p.connected ? '' : ' offline'}`;
     if (p.status === 'out')   row.classList.add('player-out');
     if (p.status === 'gulag') row.classList.add('player-gulag');
+    if (p.ready)              row.classList.add('player-ready');
     row.style.setProperty('--row-delay', `${idx * 50}ms`);
     row.classList.add('lb-row-enter');
+    const tc = teamColor(p.teamId);
+    if (tc) row.style.borderInlineStartColor = tc;
     const badge = p.status === 'out' ? ' 💀' : p.status === 'gulag' ? ' ⛓️' : '';
+    const tick  = p.ready ? ' <span class="player-ready-tick" title="جاهز">✅</span>' : '';
+    const teamDot = tc ? `<span class="team-dot" style="background:${tc}"></span>` : '';
     row.innerHTML = `
       <span class="${p.connected ? 'online-dot' : 'offline-dot'}"></span>
-      <span class="player-name">${escapeHtml(p.nickname)}${badge}</span>
+      ${avatarHTML(p.avatar, 'avatar-sm')}
+      ${teamDot}
+      <span class="player-name">${escapeHtml(p.nickname)}${badge}${tick}</span>
       <span class="text-muted" style="font-size:0.85rem;margin-inline-start:auto;margin-inline-end:8px;">${p.score ?? 0}</span>
       <button class="btn btn-danger btn-small" data-pid="${escapeHtml(p.playerId)}">طرد</button>
     `;
@@ -382,6 +423,46 @@ document.getElementById('btn-start-round').addEventListener('click', () => {
     }
   });
 });
+
+// ─── Game configuration (mode / timers / teams) ──────────────────────────────
+
+const MODE_HINTS = {
+  solo:  'الجميع يتنافسون فردياً، مع نظام الإقصاء (Gulag).',
+  teams: 'اللاعبون يُوزّعون على الفرق وتُجمع نقاطهم — لا إقصاء.',
+  rapid: 'جولات سريعة وقصيرة (افتراضي 15 ثانية).',
+};
+
+function pushConfig(extra = {}) {
+  const payload = {
+    code: state.roomCode,
+    roundSeconds: Number(document.getElementById('round-seconds').value),
+    duelSeconds: Number(document.getElementById('duel-seconds').value),
+    ...extra,
+  };
+  socket.emit('host:configure', payload, (res) => {
+    if (res?.ok && res.config) applyConfigToControls(res.config);
+  });
+}
+
+function applyConfigToControls(config) {
+  state.config = config;
+  document.querySelectorAll('#mode-grid .mode-btn').forEach(b =>
+    b.classList.toggle('selected', b.dataset.mode === config.mode));
+  document.querySelectorAll('#team-count-grid .mode-btn').forEach(b =>
+    b.classList.toggle('selected', Number(b.dataset.teams) === config.teamCount));
+  document.getElementById('round-seconds').value = config.roundSeconds;
+  document.getElementById('duel-seconds').value = config.duelSeconds;
+  document.getElementById('mode-hint').textContent = MODE_HINTS[config.mode] || '';
+  document.getElementById('team-count-group').classList.toggle('hidden', config.mode !== 'teams');
+  document.getElementById('duel-seconds-group').classList.toggle('hidden', config.mode === 'teams');
+}
+
+document.querySelectorAll('#mode-grid .mode-btn').forEach(btn =>
+  btn.addEventListener('click', () => pushConfig({ mode: btn.dataset.mode })));
+document.querySelectorAll('#team-count-grid .mode-btn').forEach(btn =>
+  btn.addEventListener('click', () => pushConfig({ teamCount: Number(btn.dataset.teams) })));
+document.getElementById('round-seconds').addEventListener('change', () => pushConfig());
+document.getElementById('duel-seconds').addEventListener('change', () => pushConfig());
 
 // ─── Adjudication ─────────────────────────────────────────────────────────────
 
@@ -471,9 +552,10 @@ document.getElementById('btn-score-round').addEventListener('click', () => {
 
 // ─── Leaderboard ──────────────────────────────────────────────────────────────
 
-socket.on('round:results', ({ leaderboard, roundNumber }) => {
+socket.on('round:results', ({ leaderboard, teamLeaderboard, roundNumber }) => {
   sfx.scored();
   renderLeaderboard(leaderboard, roundNumber);
+  renderTeamStandings('lb-team-standings', teamLeaderboard);
   showHostPhase('results');
 });
 
@@ -489,7 +571,7 @@ function renderLeaderboard(leaderboard, roundNumber) {
     const cls  = entry.roundScore > 0 ? 'delta-pos' : entry.roundScore < 0 ? 'delta-neg' : 'delta-zero';
     tr.innerHTML = `
       <td class="rank-cell">${entry.rank}</td>
-      <td class="name-cell">${escapeHtml(entry.nickname)}</td>
+      <td class="name-cell"><span class="name-with-avatar">${avatarHTML(entry.avatar, 'avatar-sm')}${escapeHtml(entry.nickname)}</span></td>
       <td class="delta-cell ${cls} delta-pop" style="animation-delay:${idx*70+300}ms">${sign}${entry.roundScore}</td>
       <td class="score-cell">${entry.totalScore}</td>
     `;
@@ -563,7 +645,7 @@ function buildHostDuelBoxes(players) {
   (players || []).forEach(p => {
     const box = document.createElement('div');
     box.className = 'duel-box';
-    box.innerHTML = `<div class="duel-box-name">${escapeHtml(p.nickname)}</div><div class="duel-box-chips chips-area"></div>`;
+    box.innerHTML = `<div class="duel-box-name">${avatarHTML(p.avatar, 'avatar-sm')} ${escapeHtml(p.nickname)}</div><div class="duel-box-chips chips-area"></div>`;
     wrap.appendChild(box);
     state.duelBoxes[p.playerId] = box.querySelector('.duel-box-chips');
   });
@@ -650,8 +732,9 @@ document.getElementById('btn-duel-continue').addEventListener('click', () => {
 
 // ─── Final screen ─────────────────────────────────────────────────────────────
 
-socket.on('game:finished', ({ leaderboard }) => {
+socket.on('game:finished', ({ leaderboard, teamLeaderboard }) => {
   renderFinal(leaderboard);
+  renderTeamStandings('final-team-standings', teamLeaderboard);
   showHostPhase('finished');
   sfx.fanfare();
   setTimeout(launchConfetti, 400);
@@ -667,11 +750,29 @@ function renderFinal(leaderboard) {
     tr.style.setProperty('--row-delay', `${idx * 60}ms`);
     tr.innerHTML = `
       <td class="rank-cell">${entry.rank}</td>
-      <td class="name-cell">${escapeHtml(entry.nickname)}</td>
+      <td class="name-cell"><span class="name-with-avatar">${avatarHTML(entry.avatar, 'avatar-sm')}${escapeHtml(entry.nickname)}</span></td>
       <td class="score-cell">${entry.totalScore}</td>
     `;
     tbody.appendChild(tr);
   });
+}
+
+// ─── Team standings ───────────────────────────────────────────────────────────
+
+function renderTeamStandings(containerId, teamLeaderboard) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  if (!teamLeaderboard || !teamLeaderboard.length) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  el.classList.remove('hidden');
+  el.innerHTML = `<div class="team-standings-title">🏆 ترتيب الفرق</div>` +
+    teamLeaderboard.map(t => `
+      <div class="team-row" style="border-inline-start-color:${t.color}">
+        <span class="team-rank">${t.rank}</span>
+        <span class="team-dot" style="background:${t.color}"></span>
+        <span class="team-name">${escapeHtml(t.name)}</span>
+        <span class="team-members">${t.members} لاعب</span>
+        <span class="team-score">${t.totalScore}</span>
+      </div>`).join('');
 }
 
 document.getElementById('btn-new-game').addEventListener('click', () => {
@@ -698,6 +799,7 @@ function renderPodium(containerId, leaderboard) {
     div.className = `podium-item ${classes[i]}`;
     div.innerHTML = `
       <span class="podium-emoji">${medals[i]}</span>
+      ${avatarHTML(entry.avatar)}
       <span class="podium-name">${escapeHtml(entry.nickname)}</span>
       <span class="podium-score">${entry.totalScore} نقطة</span>
       <div class="podium-stand">${labels[i]}</div>
@@ -726,6 +828,70 @@ function launchConfetti() {
     setTimeout(() => el.remove(), 6000);
   }
 }
+
+// ─── Chat ───────────────────────────────────────────────────────────────────
+
+function toggleChat(open) {
+  state.chatOpen = open;
+  document.getElementById('chat-drawer').classList.toggle('hidden', !open);
+  if (open) {
+    state.chatUnread = 0;
+    updateChatBadge();
+    setTimeout(() => document.getElementById('chat-input').focus(), 50);
+    const box = document.getElementById('chat-messages');
+    box.scrollTop = box.scrollHeight;
+  }
+}
+function updateChatBadge() {
+  const b = document.getElementById('chat-unread');
+  if (!b) return;
+  b.textContent = state.chatUnread;
+  b.classList.toggle('hidden', state.chatUnread === 0);
+}
+function appendChatMessage(msg) {
+  const box = document.getElementById('chat-messages');
+  const empty = box.querySelector('.chat-empty');
+  if (empty) empty.remove();
+  const mine = msg.isHost;
+  const div = document.createElement('div');
+  div.className = `chat-msg${mine ? ' mine' : ''}${msg.isHost ? ' host-msg' : ''}`;
+  div.innerHTML = `
+    <div class="chat-msg-head">
+      ${avatarHTML(msg.avatar, 'avatar-sm')}
+      <span class="chat-msg-name">${escapeHtml(msg.nickname)}</span>
+    </div>
+    <div class="chat-msg-body">${escapeHtml(msg.text)}</div>`;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+function loadChatHistory(messages) {
+  const box = document.getElementById('chat-messages');
+  if (!box) return;
+  box.innerHTML = '';
+  if (!messages || !messages.length) {
+    box.innerHTML = '<p class="chat-empty">لا توجد رسائل بعد.</p>';
+    return;
+  }
+  messages.forEach(appendChatMessage);
+}
+function sendChat() {
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  socket.emit('chat:send', { code: state.roomCode, text });
+  input.value = '';
+  input.focus();
+}
+
+document.getElementById('chat-btn').addEventListener('click', () => toggleChat(!state.chatOpen));
+document.getElementById('chat-close').addEventListener('click', () => toggleChat(false));
+document.getElementById('chat-send').addEventListener('click', sendChat);
+document.getElementById('chat-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
+
+socket.on('chat:message', (msg) => {
+  appendChatMessage(msg);
+  if (!state.chatOpen && !msg.isHost) { state.chatUnread += 1; updateChatBadge(); }
+});
 
 // ─── Connection ───────────────────────────────────────────────────────────────
 

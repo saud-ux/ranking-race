@@ -97,6 +97,9 @@ let state = {
   playerId: localStorage.getItem('playerId'),
   roomCode: localStorage.getItem('roomCode'),
   nickname: localStorage.getItem('nickname'),
+  avatar: localStorage.getItem('avatar') || '',
+  team: null,                // { id, name, color } | null
+  config: { mode: 'solo', roundSeconds: 30, duelSeconds: 20, teams: [] },
   phase: 'lobby',
   status: 'active',          // 'active' | 'gulag' | 'out'
   roundEndsAt: null,
@@ -105,7 +108,86 @@ let state = {
   lastTickSec: -1,
   specTickInterval: null,    // countdown timer for the spectator view
   specBoxes: {},             // playerId → chips container element
+  ready: false,
+  chatOpen: false,
+  chatUnread: 0,
+  lastSpecPlayers: [],       // roster of the current spectator view
 };
+
+// ─── Avatars ──────────────────────────────────────────────────────────────────
+
+const AVATAR_EMOJIS = ['🙂','😎','🤩','😺','🦊','🐼','🦁','🐧','🐸','🐯','🦄','👑','⚽','🎮','🍕','🌟','🔥','🚀','🎩','🐙'];
+
+// Build the HTML for an avatar chip (image data-URL or emoji/text fallback)
+function avatarHTML(avatar, extraClass = '') {
+  const cls = `avatar-chip ${extraClass}`.trim();
+  if (avatar && avatar.startsWith('data:image/'))
+    return `<span class="${cls}"><img src="${escapeHtml(avatar)}" alt=""></span>`;
+  return `<span class="${cls}">${escapeHtml(avatar || '🙂')}</span>`;
+}
+
+// Inner markup of an avatar (image or emoji) — for filling an existing chip element
+function avatarInner(avatar) {
+  if (avatar && avatar.startsWith('data:image/'))
+    return `<img src="${escapeHtml(avatar)}" alt="">`;
+  return escapeHtml(avatar || '🙂');
+}
+
+// Downscale an uploaded image to a small square JPEG data-URL
+function downscaleImage(file, cb) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const S = 96;
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = S;
+      const ctx = canvas.getContext('2d');
+      const side = Math.min(img.width, img.height);
+      const sx = (img.width - side) / 2, sy = (img.height - side) / 2;
+      ctx.drawImage(img, sx, sy, side, side, 0, 0, S, S);
+      cb(canvas.toDataURL('image/jpeg', 0.7));
+    };
+    img.onerror = () => cb(null);
+    img.src = reader.result;
+  };
+  reader.onerror = () => cb(null);
+  reader.readAsDataURL(file);
+}
+
+// Wire an avatar picker: emoji grid + upload, syncing into a preview element
+function setupAvatarPicker(optionsId, previewId, fileId, get, set) {
+  const options = document.getElementById(optionsId);
+  const preview = document.getElementById(previewId);
+  function refresh() {
+    const cur = get();
+    if (cur && cur.startsWith('data:image/')) preview.innerHTML = `<img src="${escapeHtml(cur)}" alt="">`;
+    else preview.textContent = cur || '🙂';
+    options.querySelectorAll('.avatar-opt').forEach(b =>
+      b.classList.toggle('selected', b.dataset.emoji === cur));
+  }
+  options.innerHTML = '';
+  AVATAR_EMOJIS.forEach(em => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'avatar-opt'; b.dataset.emoji = em; b.textContent = em;
+    b.addEventListener('click', () => { set(em); refresh(); });
+    options.appendChild(b);
+  });
+  document.getElementById(fileId).addEventListener('change', e => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    downscaleImage(file, dataUrl => { if (dataUrl) { set(dataUrl); refresh(); } });
+    e.target.value = '';
+  });
+  refresh();
+  return refresh;
+}
+
+// Small team badge HTML
+function teamBadgeHTML(team) {
+  if (!team) return '';
+  return `<span class="team-badge" style="background:${team.color}">${escapeHtml(team.name)}</span>`;
+}
 
 // ─── Screen / state helpers ───────────────────────────────────────────────────
 
@@ -143,7 +225,7 @@ function clearPlayerStorage() {
 // ─── Join / reconnect ─────────────────────────────────────────────────────────
 
 function attemptJoin(code, nickname, playerId) {
-  socket.emit('player:join', { code, nickname, playerId }, (res) => {
+  socket.emit('player:join', { code, nickname, playerId, avatar: state.avatar }, (res) => {
     if (!res.ok) {
       if (res.error === 'تمت إزالتك من الغرفة') clearPlayerStorage();
       showJoinError(res.error);
@@ -156,11 +238,17 @@ function attemptJoin(code, nickname, playerId) {
     state.roomCode = code.toUpperCase();
     state.nickname = res.nickname;
     state.status = res.status || 'active';
+    state.avatar = res.avatar || state.avatar || '';
+    state.team = res.team || null;
+    state.ready = !!res.ready;
+    if (res.config) state.config = res.config;
     localStorage.setItem('playerId', res.playerId);
     localStorage.setItem('roomCode', state.roomCode);
     localStorage.setItem('nickname', res.nickname);
+    localStorage.setItem('avatar', state.avatar);
 
-    document.getElementById('display-nickname').textContent = res.nickname;
+    updateTopBar();
+    if (res.chat) loadChatHistory(res.chat);
     showScreen('lobby');
 
     if (res.duelInfo) {
@@ -170,7 +258,10 @@ function attemptJoin(code, nickname, playerId) {
     } else if (res.phase === 'round' && res.roundInfo) {
       enterRound(res.roundInfo.category, res.roundInfo.endsAt, res.roundInfo.myAnswers || []);
     } else if (res.phase === 'finished' && res.leaderboard) {
+      lastFinalLeaderboard = res.leaderboard;
+      lastFinalTeams = res.teamLeaderboard || null;
       renderFinal(res.leaderboard);
+      renderTeamStandings('final-team-standings', res.teamLeaderboard);
       showGameState('final');
     } else if (state.status !== 'active') {
       showSpectatorIdle();
@@ -178,11 +269,48 @@ function attemptJoin(code, nickname, playerId) {
       showGameState('ended');
     } else if (res.phase === 'results' && res.leaderboard) {
       renderLeaderboard(res.leaderboard, res.roundNumber);
+      renderTeamStandings('results-team-standings', res.teamLeaderboard);
       showGameState('results');
     } else {
+      updateWaitingUI();
       showGameState('waiting');
     }
   });
+}
+
+// ─── Top bar / waiting UI ───────────────────────────────────────────────────
+
+function updateTopBar() {
+  document.getElementById('display-nickname').textContent = state.nickname || '';
+  document.getElementById('display-avatar').innerHTML = avatarInner(state.avatar);
+  const teamEl = document.getElementById('display-team');
+  if (state.team) {
+    teamEl.textContent = state.team.name;
+    teamEl.style.background = state.team.color;
+    teamEl.classList.remove('hidden');
+  } else {
+    teamEl.classList.add('hidden');
+  }
+}
+
+function modeLabel(mode) {
+  return mode === 'teams' ? '👥 وضع الفرق' : mode === 'rapid' ? '⚡ نار سريعة' : '🏁 فردي';
+}
+
+function updateWaitingUI() {
+  const badge = document.getElementById('mode-badge');
+  if (badge) {
+    badge.textContent = modeLabel(state.config?.mode);
+    badge.classList.remove('hidden');
+  }
+  refreshReadyButton();
+}
+
+function refreshReadyButton() {
+  const btn = document.getElementById('btn-ready');
+  if (!btn) return;
+  btn.textContent = state.ready ? 'جاهز ✅ (اضغط للإلغاء)' : 'أنا جاهز ✅';
+  btn.classList.toggle('is-ready', state.ready);
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
@@ -199,6 +327,199 @@ function attemptJoin(code, nickname, playerId) {
   }
 })();
 
+// ─── Avatar pickers (join + profile) ──────────────────────────────────────────
+
+let joinAvatar = state.avatar || '🙂';
+setupAvatarPicker('join-avatar-options', 'join-avatar-preview', 'join-avatar-file',
+  () => joinAvatar, v => { joinAvatar = v; });
+
+let profileAvatarDraft = '';
+const refreshProfilePicker = setupAvatarPicker('profile-avatar-options', 'profile-avatar-preview',
+  'profile-avatar-file', () => profileAvatarDraft, v => { profileAvatarDraft = v; });
+
+// ─── Profile edit modal ───────────────────────────────────────────────────────
+
+function openProfileModal() {
+  profileAvatarDraft = state.avatar || '🙂';
+  document.getElementById('profile-name').value = state.nickname || '';
+  refreshProfilePicker();
+  document.getElementById('profile-modal').classList.remove('hidden');
+}
+function closeProfileModal() { document.getElementById('profile-modal').classList.add('hidden'); }
+
+document.getElementById('btn-edit-profile').addEventListener('click', openProfileModal);
+document.getElementById('btn-profile-cancel').addEventListener('click', closeProfileModal);
+document.getElementById('btn-profile-save').addEventListener('click', () => {
+  const nickname = document.getElementById('profile-name').value.trim();
+  socket.emit('player:update_profile',
+    { code: state.roomCode, nickname, avatar: profileAvatarDraft }, (res) => {
+      if (res?.ok) {
+        state.nickname = res.nickname;
+        state.avatar = res.avatar;
+        localStorage.setItem('nickname', state.nickname);
+        localStorage.setItem('avatar', state.avatar);
+        updateTopBar();
+        closeProfileModal();
+      }
+    });
+});
+
+// ─── Ready toggle ─────────────────────────────────────────────────────────────
+
+document.getElementById('btn-ready').addEventListener('click', () => {
+  state.ready = !state.ready;
+  refreshReadyButton();
+  socket.emit('player:set_ready', { code: state.roomCode, ready: state.ready });
+});
+
+// ─── Config / profile-update events ───────────────────────────────────────────
+
+socket.on('room:config', (config) => {
+  state.config = config;
+  if (config.mode === 'teams' && config.teams?.length) {
+    // keep our team label fresh if it appears in the config (name/color may change)
+    if (state.team) {
+      const t = config.teams.find(x => x.id === state.team.id);
+      if (t) state.team = t;
+    }
+  } else {
+    state.team = null;
+  }
+  updateTopBar();
+  if (state.phase === 'lobby' || document.getElementById('state-waiting'))
+    updateWaitingUI();
+});
+
+socket.on('player:profile_updated', ({ playerId, nickname, avatar }) => {
+  // Update any spectator box belonging to this player
+  const box = state.specBoxes[playerId];
+  if (box) {
+    const nameEl = box.parentElement?.querySelector('.spec-box-name');
+    if (nameEl) nameEl.innerHTML = `${avatarHTML(avatar, 'avatar-sm')} ${escapeHtml(nickname)}`;
+  }
+  if (playerId === state.playerId) {
+    state.nickname = nickname; state.avatar = avatar; updateTopBar();
+  }
+});
+
+// ─── Chat ───────────────────────────────────────────────────────────────────
+
+function toggleChat(open) {
+  state.chatOpen = open;
+  document.getElementById('chat-drawer').classList.toggle('hidden', !open);
+  if (open) {
+    state.chatUnread = 0;
+    updateChatBadge();
+    const input = document.getElementById('chat-input');
+    setTimeout(() => input.focus(), 50);
+    const box = document.getElementById('chat-messages');
+    box.scrollTop = box.scrollHeight;
+  }
+}
+function updateChatBadge() {
+  const b = document.getElementById('chat-unread');
+  if (!b) return;
+  b.textContent = state.chatUnread;
+  b.classList.toggle('hidden', state.chatUnread === 0);
+}
+function appendChatMessage(msg) {
+  const box = document.getElementById('chat-messages');
+  const empty = box.querySelector('.chat-empty');
+  if (empty) empty.remove();
+  const mine = msg.playerId === state.playerId;
+  const div = document.createElement('div');
+  div.className = `chat-msg${mine ? ' mine' : ''}${msg.isHost ? ' host-msg' : ''}`;
+  div.innerHTML = `
+    <div class="chat-msg-head">
+      ${avatarHTML(msg.avatar, 'avatar-sm')}
+      <span class="chat-msg-name">${escapeHtml(msg.nickname)}</span>
+    </div>
+    <div class="chat-msg-body">${escapeHtml(msg.text)}</div>`;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+function loadChatHistory(messages) {
+  const box = document.getElementById('chat-messages');
+  box.innerHTML = '';
+  if (!messages || !messages.length) {
+    box.innerHTML = '<p class="chat-empty">لا توجد رسائل بعد — كن أول من يكتب! 👋</p>';
+    return;
+  }
+  messages.forEach(appendChatMessage);
+}
+function sendChat() {
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  socket.emit('chat:send', { code: state.roomCode, text });
+  input.value = '';
+  input.focus();
+}
+
+document.getElementById('chat-btn').addEventListener('click', () => toggleChat(!state.chatOpen));
+document.getElementById('chat-close').addEventListener('click', () => toggleChat(false));
+document.getElementById('chat-send').addEventListener('click', sendChat);
+document.getElementById('chat-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
+
+socket.on('chat:message', (msg) => {
+  appendChatMessage(msg);
+  if (!state.chatOpen && msg.playerId !== state.playerId) {
+    state.chatUnread += 1;
+    updateChatBadge();
+  }
+});
+
+// ─── Team standings ───────────────────────────────────────────────────────────
+
+function renderTeamStandings(containerId, teamLeaderboard) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  if (!teamLeaderboard || !teamLeaderboard.length) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  el.classList.remove('hidden');
+  el.innerHTML = `<div class="team-standings-title">🏆 ترتيب الفرق</div>` +
+    teamLeaderboard.map(t => `
+      <div class="team-row" style="border-inline-start-color:${t.color}">
+        <span class="team-rank">${t.rank}</span>
+        <span class="team-dot" style="background:${t.color}"></span>
+        <span class="team-name">${escapeHtml(t.name)}</span>
+        <span class="team-members">${t.members} لاعب</span>
+        <span class="team-score">${t.totalScore}</span>
+      </div>`).join('');
+}
+
+// ─── Share results ────────────────────────────────────────────────────────────
+
+let lastFinalLeaderboard = [];
+let lastFinalTeams = null;
+
+async function shareResults() {
+  const lines = ['🏁 نتائج سباق التصنيف'];
+  if (lastFinalTeams?.length) {
+    lines.push('', '👥 الفرق:');
+    lastFinalTeams.forEach(t => lines.push(`${t.rank}. ${t.name} — ${t.totalScore}`));
+  }
+  lines.push('', '🏆 اللاعبون:');
+  lastFinalLeaderboard.slice(0, 10).forEach(e => {
+    const medal = e.rank === 1 ? '🥇' : e.rank === 2 ? '🥈' : e.rank === 3 ? '🥉' : `${e.rank}.`;
+    lines.push(`${medal} ${e.nickname} — ${e.totalScore}`);
+  });
+  const text = lines.join('\n');
+  try {
+    if (navigator.share) { await navigator.share({ title: 'سباق التصنيف', text }); return; }
+    await navigator.clipboard.writeText(text);
+    flashShareButton('نُسخت النتائج ✅');
+  } catch {
+    flashShareButton('تعذّرت المشاركة');
+  }
+}
+function flashShareButton(msg) {
+  const btn = document.getElementById('btn-share');
+  const orig = btn.textContent;
+  btn.textContent = msg;
+  setTimeout(() => { btn.textContent = orig; }, 1800);
+}
+document.getElementById('btn-share').addEventListener('click', shareResults);
+
 // ─── Join form ────────────────────────────────────────────────────────────────
 
 document.getElementById('btn-join').addEventListener('click', doJoin);
@@ -213,6 +534,7 @@ function doJoin() {
   if (!code || code.length !== 4) { showJoinError('أدخل كود الغرفة (4 أحرف)'); return; }
   if (!nickname) { showJoinError('أدخل اسمك'); return; }
   document.getElementById('btn-join').disabled = true;
+  state.avatar = joinAvatar;
   getCtx(); // unlock audio on first interaction
   attemptJoin(code, nickname, null);
 }
@@ -338,10 +660,11 @@ socket.on('round:time_up', () => {
 
 socket.on('round:reset', () => {
   state.phase = 'lobby';
+  state.ready = false;
   clearInterval(state.tickInterval);
   clearInterval(state.specTickInterval);
   if (state.status !== 'active') showSpectatorIdle();
-  else showGameState('waiting');
+  else { updateWaitingUI(); showGameState('waiting'); }
 });
 
 // ─── Gulag & duel (player) ──────────────────────────────────────────────────
@@ -469,10 +792,11 @@ function buildSpectateGrid(players) {
   const grid = document.getElementById('spectate-grid');
   grid.innerHTML = '';
   state.specBoxes = {};
+  state.lastSpecPlayers = players;
   players.forEach(p => {
     const box = document.createElement('div');
     box.className = 'spec-box';
-    box.innerHTML = `<div class="spec-box-name">${escapeHtml(p.nickname)}</div><div class="spec-chips"></div>`;
+    box.innerHTML = `<div class="spec-box-name">${avatarHTML(p.avatar, 'avatar-sm')} ${escapeHtml(p.nickname)}</div><div class="spec-chips"></div>`;
     grid.appendChild(box);
     state.specBoxes[p.playerId] = box.querySelector('.spec-chips');
   });
@@ -519,9 +843,10 @@ socket.on('spectate:round_end', () => {
 
 // ─── Results / leaderboard ────────────────────────────────────────────────────
 
-socket.on('round:results', ({ leaderboard, roundNumber }) => {
+socket.on('round:results', ({ leaderboard, teamLeaderboard, roundNumber }) => {
   state.phase = 'results';
   renderLeaderboard(leaderboard, roundNumber);
+  renderTeamStandings('results-team-standings', teamLeaderboard);
   showGameState('results');
 
   // Play score sound based on own delta
@@ -551,7 +876,7 @@ function renderLeaderboard(leaderboard, roundNumber) {
     const cls  = entry.roundScore > 0 ? 'delta-pos' : entry.roundScore < 0 ? 'delta-neg' : 'delta-zero';
     tr.innerHTML = `
       <td class="rank-cell">${entry.rank}</td>
-      <td class="name-cell">${escapeHtml(entry.nickname)}${isMe ? ' <span style="color:var(--accent);font-size:0.75rem;">(أنت)</span>' : ''}</td>
+      <td class="name-cell"><span class="name-with-avatar">${avatarHTML(entry.avatar, 'avatar-sm')}${escapeHtml(entry.nickname)}${isMe ? ' <span style="color:var(--accent);font-size:0.75rem;">(أنت)</span>' : ''}</span></td>
       <td class="delta-cell ${cls} delta-pop" style="animation-delay:${idx*70+300}ms">${sign}${entry.roundScore}</td>
       <td class="score-cell">${entry.totalScore}</td>
     `;
@@ -561,9 +886,12 @@ function renderLeaderboard(leaderboard, roundNumber) {
 
 // ─── Final screen ─────────────────────────────────────────────────────────────
 
-socket.on('game:finished', ({ leaderboard }) => {
+socket.on('game:finished', ({ leaderboard, teamLeaderboard }) => {
   state.phase = 'finished';
+  lastFinalLeaderboard = leaderboard || [];
+  lastFinalTeams = teamLeaderboard || null;
   renderFinal(leaderboard);
+  renderTeamStandings('final-team-standings', teamLeaderboard);
   showGameState('final');
   sfx.fanfare();
   setTimeout(launchConfetti, 400);
@@ -584,7 +912,7 @@ function renderFinal(leaderboard) {
     tr.style.setProperty('--row-delay', `${idx * 60}ms`);
     tr.innerHTML = `
       <td class="rank-cell">${entry.rank}</td>
-      <td class="name-cell">${escapeHtml(entry.nickname)}${isMe ? ' <span style="color:var(--accent);font-size:0.75rem;">(أنت)</span>' : ''}</td>
+      <td class="name-cell"><span class="name-with-avatar">${avatarHTML(entry.avatar, 'avatar-sm')}${escapeHtml(entry.nickname)}${isMe ? ' <span style="color:var(--accent);font-size:0.75rem;">(أنت)</span>' : ''}</span></td>
       <td class="score-cell">${entry.totalScore}</td>
     `;
     tbody.appendChild(tr);
@@ -608,6 +936,7 @@ function renderPodium(containerId, leaderboard) {
     div.className = `podium-item ${classes[i]}`;
     div.innerHTML = `
       <span class="podium-emoji">${medals[i]}</span>
+      ${avatarHTML(entry.avatar)}
       <span class="podium-name">${escapeHtml(entry.nickname)}</span>
       <span class="podium-score">${entry.totalScore} نقطة</span>
       <div class="podium-stand">${labels[i]}</div>

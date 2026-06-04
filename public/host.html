@@ -33,6 +33,7 @@
       <div style="display:flex;align-items:center;gap:10px;">
         <span id="host-conn-label" class="conn-label">متصل</span>
         <span id="host-status-dot" class="status-dot connected"></span>
+        <button id="chat-btn" class="icon-btn" title="الدردشة">💬<span id="chat-unread" class="chat-unread hidden">0</span></button>
         <button id="host-mute-btn" class="mute-btn" title="كتم الصوت">🔊</button>
         <button id="btn-logout" class="btn btn-secondary btn-small">خروج</button>
       </div>
@@ -68,7 +69,10 @@
         <div class="card player-list-panel">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
             <span class="section-title" style="margin:0;">اللاعبون</span>
-            <span id="player-count-badge" class="player-count-badge">0 / 20</span>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span id="ready-badge" class="player-count-badge ready-badge hidden">✅ 0/0</span>
+              <span id="player-count-badge" class="player-count-badge">0 / 20</span>
+            </div>
           </div>
           <div id="player-list" class="player-list">
             <p class="text-muted" style="font-size:0.9rem;">لم ينضم أحد بعد…</p>
@@ -77,6 +81,43 @@
 
         <!-- Round controls (lobby phase only) -->
         <div id="round-controls" class="card round-panel hidden">
+          <div class="section-title">إعدادات اللعبة</div>
+
+          <!-- Game mode -->
+          <div class="form-group mb-8">
+            <label>نمط اللعب</label>
+            <div class="mode-grid" id="mode-grid">
+              <button class="mode-btn selected" data-mode="solo">🏁 فردي</button>
+              <button class="mode-btn" data-mode="teams">👥 فرق</button>
+              <button class="mode-btn" data-mode="rapid">⚡ نار سريعة</button>
+            </div>
+            <p id="mode-hint" class="text-muted" style="font-size:0.8rem;margin-top:6px;"></p>
+          </div>
+
+          <!-- Team count (teams mode only) -->
+          <div class="form-group mb-8 hidden" id="team-count-group">
+            <label>عدد الفرق</label>
+            <div class="mode-grid" id="team-count-grid">
+              <button class="mode-btn selected" data-teams="2">2</button>
+              <button class="mode-btn" data-teams="3">3</button>
+              <button class="mode-btn" data-teams="4">4</button>
+            </div>
+          </div>
+
+          <!-- Timers -->
+          <div class="timer-row">
+            <div class="form-group" style="flex:1;margin:0;">
+              <label for="round-seconds">مدة الجولة (ثانية)</label>
+              <input id="round-seconds" class="input" type="number" min="10" max="120" step="5" value="30">
+            </div>
+            <div class="form-group" id="duel-seconds-group" style="flex:1;margin:0;">
+              <label for="duel-seconds">مدة المبارزة (ثانية)</label>
+              <input id="duel-seconds" class="input" type="number" min="10" max="60" step="5" value="20">
+            </div>
+          </div>
+
+          <div class="divider"></div>
+
           <div class="section-title">إعداد الجولة</div>
           <div class="form-group mb-8">
             <label>اختر فئة</label>
@@ -139,6 +180,7 @@
           </thead>
           <tbody id="lb-tbody"></tbody>
         </table>
+        <div id="lb-team-standings" class="team-standings hidden mt-16"></div>
       </div>
 
       <!-- Duel live panel (duel phase) -->
@@ -165,6 +207,8 @@
         <div class="final-title">🎉 انتهت اللعبة!</div>
         <p class="final-subtitle">النتائج النهائية</p>
 
+        <div id="final-team-standings" class="team-standings hidden mb-16"></div>
+
         <div id="host-podium" class="podium-wrap"></div>
 
         <div class="divider"></div>
@@ -187,6 +231,20 @@
         </div>
       </div>
 
+    </div>
+
+    <!-- Chat drawer -->
+    <div id="chat-drawer" class="chat-drawer hidden">
+      <div class="chat-head">
+        <span class="chat-title">💬 الدردشة</span>
+        <button id="chat-close" class="icon-btn" title="إغلاق">✕</button>
+      </div>
+      <div id="chat-messages" class="chat-messages"></div>
+      <div class="chat-input-wrap">
+        <input id="chat-input" class="input" type="text" maxlength="240"
+               placeholder="اكتب رسالة…" autocomplete="off">
+        <button id="chat-send" class="btn btn-primary">إرسال</button>
+      </div>
     </div>
 
     <!-- Gulag confirmation modal -->

@@ -37,17 +37,19 @@
   .line {
     flex: 0 0 auto; width: 92%; max-width: 1100px;
     text-align: center; line-height: 1.35; padding: 0.35em 0;
-    font-size: 1.8rem; font-weight: 500; color: #fff;
-    opacity: 0.3; transform: scale(0.85);
-    transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.25,0.8,0.3,1), font-size 0.5s ease;
+    font-size: 1.5rem; font-weight: 500; color: #cfcfcf;
+    opacity: 0.16; transform: scale(0.78); filter: blur(0.4px);
+    transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.25,0.8,0.3,1), font-size 0.5s ease, filter 0.5s ease, color 0.5s ease;
     cursor: pointer;
   }
+  /* the immediate neighbours stay a bit more readable */
+  .line.near { opacity: 0.34; transform: scale(0.84); filter: none; }
   .line.active {
-    font-size: 5rem; font-weight: 900; opacity: 1; color: #fff; transform: scale(1);
-    text-shadow: 0 0 18px rgba(255,191,105,.55), 0 0 42px rgba(255,160,50,.35), 0 0 80px rgba(255,140,30,.18);
+    font-size: 6rem; font-weight: 900; opacity: 1; color: #fff; transform: scale(1); filter: none;
+    text-shadow: 0 0 22px rgba(255,191,105,.7), 0 0 50px rgba(255,160,50,.45), 0 0 90px rgba(255,140,30,.25);
     animation: pulse 2.6s ease-in-out infinite;
   }
-  @keyframes pulse { 0%,100%{transform:scale(1);} 50%{transform:scale(1.035);} }
+  @keyframes pulse { 0%,100%{transform:scale(1);} 50%{transform:scale(1.045);} }
 
   /* ===== Progress bar ===== */
   #progress {
@@ -141,7 +143,7 @@
   }
 
   @media (max-width:640px){
-    .line{font-size:1.3rem;} .line.active{font-size:2.6rem;} #gate h1{font-size:2rem;}
+    .line{font-size:1.05rem;} .line.active{font-size:3rem;} #gate h1{font-size:2rem;}
   }
 </style>
 </head>
@@ -238,7 +240,7 @@
 
   function setActive(i){
     if(i===current) return; current=i;
-    nodes.forEach((el,k)=>el.classList.toggle('active',k===i));
+    nodes.forEach((el,k)=>{ el.classList.toggle('active',k===i); el.classList.toggle('near',k===i-1||k===i+1); });
     const a=nodes[i]; if(!a) return;
     const off=stage.clientHeight/2-(a.offsetTop+a.offsetHeight/2);
     track.style.transform=`translateY(${off}px)`;

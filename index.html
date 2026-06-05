@@ -154,12 +154,12 @@
 </style>
 </head>
 <body>
-  <div id="syncBanner">🎙️ وضع المزامنة — <b>انقر الشاشة</b> مع بداية كل سطر</div>
+  <div id="syncBanner">🎙️ وضع المزامنة — انقر <b>لحظة ما يخلص كل سطر</b> ويبدأ اللي بعده</div>
 
   <div id="stage"><div id="track"></div></div>
 
   <div id="tapPad">
-    <div id="tapCircle">انقر<br>مع كل سطر</div>
+    <div id="tapCircle">انقر<br>بنهاية كل سطر</div>
     <div id="tapCount">السطر 1 / 34</div>
     <button id="tapDone">إنهاء وحفظ</button>
   </div>
@@ -188,7 +188,7 @@
   <div id="gate">
     <h1>أبطى العصر</h1>
     <div id="playBig"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
-    <p>اضغط للتشغيل — الكلمات تمشي مع الأغنية.<br>لأدق مزامنة: اضغط زر الميكروفون 🎤 ثم <b>انقر الشاشة</b> مع بداية كل سطر مرّة وحدة — ويتحفظ تلقائياً على جهازك.</p>
+    <p>اضغط للتشغيل — الكلمات تمشي مع الأغنية.<br>لأدق مزامنة: اضغط زر الميكروفون 🎤 ثم انقر الشاشة <b>لحظة ما يخلص كل سطر</b> (ويبدأ اللي بعده) — السطر المضيّأ هو اللي يُغنّى الآن، ويتحفظ تلقائياً.</p>
   </div>
 
   <div id="toast"></div>
@@ -201,6 +201,7 @@
     "يا بهجت الوجدان يا قرة العين","يا طلق الوجه الضاعني يالسانه",
     "يا خوخ يا عرموط يا عنب يا تين","يا ترنج يا رمان يا بردقانه",
     "يا شيخة النسوان يا قمة الزين","يعلو الأشياء يا سنام المكانه",
+    "يا شيخة النسوان يا قمة الزين","يعلو الأشياء يا سنام المكانه",
     "يا ملح يا دلوعتي يا قبالين","يا نوثة الغضات يا خيزرانه",
     "يا ملح يا دلوعتي يا قبالين","يا نوثة الغضات يا خيزرانه",
     "يا اضخم مقفى يا انعم اطراف يالين","ليني لمن يقطع ظماك بحنانه",
@@ -208,7 +209,9 @@
     "واعفاك عن دينه غلا كود ثنتين","الاوله حبك والاخرى الامانه",
     "واعفاك عن دينه غلا كود ثنتين","الاوله حبك والاخرى الامانه",
     "أمانتن ما تنعطى للموالين","ياكود ديانك عشانه عشانه",
+    "أمانتن ما تنعطى للموالين","ياكود ديانك عشانه عشانه",
     "هيه عشانه من حساب المجانين","وانتي عسى يفداك زدتي جنانه",
+    "تكفين دقي عجلي مت تكفين","يا جوهره يا كهرمان ويا دانه",
     "تكفين دقي عجلي مت تكفين","يا جوهره يا كهرمان ويا دانه",
     "ابطى العصر وانا اتحرى تدقين","دقي عساه الحي لو تم اذانه",
     "يا بهجت الوجدان يا قرة العين","يا طلق الوجه الضاعني يالسانه",
@@ -216,8 +219,8 @@
     "يا شيخة النسوان يا قمة الزين","يعلو الأشياء يا سنام المكانه"
   ];
 
-  // Pre-baked cue times (seconds) = END of each line. Synced to song.mp3 (3:48); repeated verses extended per ear.
-  const BAKED_CUES = [14.4,18.47,23.12,27.27,31.9,36.17,48,53,58.31,62.91,81.66,86.11,90.6,94.65,99.37,103.33,108.28,113.12,131.62,135.85,150,154,157.89,162.37,177,181,183.93,188.38,192.78,197.03,201.73,205.95,210.48,215.53];
+  // Pre-baked cue times (seconds) = END of each line. null until re-synced for the 40-line (with-repeats) version.
+  const BAKED_CUES = null;
 
   const PLAY='<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
   const PAUSE='<svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>';
@@ -302,7 +305,7 @@
     syncMode=true; syncIdx=0; cues=LYRICS.map(()=>null);
     banner.classList.add('show'); syncBtn.classList.add('on'); tapPad.classList.add('show');
     setActive(0); updateTapCount(); if(audio.paused)audio.play();
-    showToast('انقر الشاشة مع كل سطر',2200);
+    showToast('انقر لحظة ما يخلص كل سطر',2400);
   }
   function exitSync(){
     for(let i=0;i<cues.length;i++) if(cues[i]==null) cues[i]=+audio.currentTime.toFixed(2);
@@ -313,9 +316,11 @@
   function tapSync(){
     if(!syncMode) return;
     if(syncIdx>=LYRICS.length){ exitSync(); return; }
+    // tap = the highlighted line just ENDED. Record its end time, then move to the next line.
     cues[syncIdx]=+audio.currentTime.toFixed(2);
-    setActive(syncIdx); syncIdx++; updateTapCount();
-    if(syncIdx>=LYRICS.length){ saveCues(); syncMode=false; banner.classList.remove('show'); syncBtn.classList.remove('on'); tapPad.classList.remove('show'); showToast('✅ خلّصت كل الأسطر — محفوظ',2600); }
+    syncIdx++; updateTapCount();
+    if(syncIdx>=LYRICS.length){ saveCues(); syncMode=false; banner.classList.remove('show'); syncBtn.classList.remove('on'); tapPad.classList.remove('show'); showToast('✅ خلّصت كل الأسطر — محفوظ',2600); return; }
+    setActive(syncIdx);
   }
   syncBtn.onclick=toggleSync;
   // tap anywhere on the pad records the next line (mobile-friendly)

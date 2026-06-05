@@ -3,22 +3,13 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>كاريوكي</title>
+<title>كاريوكي — أبطى العصر</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&display=swap" rel="stylesheet" />
 <style>
-  :root {
-    --advance-ms: 2800;
-  }
-
   * { margin: 0; padding: 0; box-sizing: border-box; }
-
-  html, body {
-    height: 100%;
-    overflow: hidden;
-  }
-
+  html, body { height: 100%; overflow: hidden; }
   body {
     background:
       radial-gradient(ellipse 90% 70% at 50% 50%, rgba(255, 170, 60, 0.07), transparent 70%),
@@ -27,389 +18,300 @@
     font-family: 'Tajawal', sans-serif;
     direction: rtl;
     -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
     user-select: none;
   }
 
   /* ===== Stage ===== */
   #stage {
-    position: fixed;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
     overflow: hidden;
-    /* fade top & bottom so off-screen lines dissolve */
-    -webkit-mask-image: linear-gradient(
-      to bottom,
-      transparent 0%,
-      #000 22%,
-      #000 78%,
-      transparent 100%
-    );
-    mask-image: linear-gradient(
-      to bottom,
-      transparent 0%,
-      #000 22%,
-      #000 78%,
-      transparent 100%
-    );
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 22%, #000 78%, transparent 100%);
+    mask-image: linear-gradient(to bottom, transparent 0%, #000 22%, #000 78%, transparent 100%);
   }
-
   #track {
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    /* vertically centered around the active line via JS transform */
-    transition: transform 0.6s cubic-bezier(0.25, 0.8, 0.3, 1);
+    width: 100%; display: flex; flex-direction: column; align-items: center;
+    transition: transform 0.55s cubic-bezier(0.25, 0.8, 0.3, 1);
     will-change: transform;
   }
-
   .line {
-    flex: 0 0 auto;
-    width: 92%;
-    max-width: 1100px;
-    text-align: center;
-    line-height: 1.35;
-    padding: 0.35em 0;
-    font-size: 1.8rem;
-    font-weight: 500;
-    color: #fff;
-    opacity: 0.3;
-    transform: scale(0.85);
-    transition:
-      opacity 0.6s ease,
-      transform 0.6s cubic-bezier(0.25, 0.8, 0.3, 1),
-      font-size 0.6s ease;
-    text-shadow: none;
+    flex: 0 0 auto; width: 92%; max-width: 1100px;
+    text-align: center; line-height: 1.35; padding: 0.35em 0;
+    font-size: 1.8rem; font-weight: 500; color: #fff;
+    opacity: 0.3; transform: scale(0.85);
+    transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.25,0.8,0.3,1), font-size 0.5s ease;
+    cursor: pointer;
   }
-
   .line.active {
-    font-size: 5rem;
-    font-weight: 900;
-    opacity: 1;
-    color: #ffffff;
-    transform: scale(1);
-    text-shadow:
-      0 0 18px rgba(255, 191, 105, 0.55),
-      0 0 42px rgba(255, 160, 50, 0.35),
-      0 0 80px rgba(255, 140, 30, 0.18);
+    font-size: 5rem; font-weight: 900; opacity: 1; color: #fff; transform: scale(1);
+    text-shadow: 0 0 18px rgba(255,191,105,.55), 0 0 42px rgba(255,160,50,.35), 0 0 80px rgba(255,140,30,.18);
     animation: pulse 2.6s ease-in-out infinite;
   }
+  @keyframes pulse { 0%,100%{transform:scale(1);} 50%{transform:scale(1.035);} }
 
-  @keyframes pulse {
-    0%, 100% { transform: scale(1); }
-    50% { transform: scale(1.035); }
+  /* ===== Progress bar ===== */
+  #progress {
+    position: fixed; left: 0; right: 0; bottom: 96px;
+    height: 4px; background: rgba(255,255,255,.08); cursor: pointer; z-index: 9;
+  }
+  #progressFill { height: 100%; width: 0%; background: linear-gradient(90deg,#ff9a3c,#ffbf69); box-shadow: 0 0 10px rgba(255,160,50,.6); }
+  #timeLabel {
+    position: fixed; bottom: 104px; left: 18px; font-size: .72rem; color: #888;
+    font-variant-numeric: tabular-nums; direction: ltr; z-index: 9;
   }
 
-  /* ===== Bottom control bar ===== */
+  /* ===== Control bar ===== */
   #bar {
-    position: fixed;
-    left: 50%;
-    bottom: 0;
-    transform: translateX(-50%);
-    display: flex;
-    align-items: center;
-    gap: 22px;
-    padding: 14px 26px;
-    margin-bottom: 18px;
-    border-radius: 999px;
-    background: rgba(20, 20, 20, 0.55);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
-    opacity: 0.25;
-    transition: opacity 0.35s ease;
-    z-index: 10;
-    direction: ltr; /* keep control order stable */
+    position: fixed; left: 50%; bottom: 0; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 18px;
+    padding: 14px 24px; margin-bottom: 18px; border-radius: 999px;
+    background: rgba(20,20,20,.6); border: 1px solid rgba(255,255,255,.06);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    opacity: .3; transition: opacity .35s ease; z-index: 10; direction: ltr;
   }
-  #bar:hover { opacity: 1; }
-
+  #bar:hover, #bar.show { opacity: 1; }
   .btn {
-    background: none;
-    border: none;
-    color: #f2f2f2;
-    cursor: pointer;
-    width: 40px;
-    height: 40px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 50%;
-    transition: background 0.2s ease, color 0.2s ease, transform 0.1s ease;
+    background: none; border: none; color: #f2f2f2; cursor: pointer;
+    width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
+    border-radius: 50%; transition: background .2s, color .2s, transform .1s;
   }
-  .btn:hover { background: rgba(255, 255, 255, 0.1); }
-  .btn:active { transform: scale(0.92); }
+  .btn:hover { background: rgba(255,255,255,.1); }
+  .btn:active { transform: scale(.92); }
   .btn svg { width: 22px; height: 22px; fill: currentColor; }
+  .btn.on { color: #ffbf69; background: rgba(255,191,105,.12); }
+  .divider { width: 1px; height: 26px; background: rgba(255,255,255,.1); }
 
-  .btn.on {
-    color: #ffbf69;
-    background: rgba(255, 191, 105, 0.12);
+  /* ===== Overlays ===== */
+  #gate {
+    position: fixed; inset: 0; z-index: 50;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px;
+    background: radial-gradient(ellipse at center, rgba(255,170,60,.08), #0a0a0a 70%);
+    cursor: pointer; text-align: center;
   }
+  #gate h1 { font-size: 2.6rem; font-weight: 900; }
+  #gate p { color: #9a9a9a; font-size: 1rem; max-width: 540px; line-height: 1.9; padding: 0 20px; }
+  #gate b { color: #ffce8a; }
+  #playBig {
+    width: 96px; height: 96px; border-radius: 50%;
+    background: rgba(255,191,105,.12); border: 1px solid rgba(255,191,105,.4);
+    display: flex; align-items: center; justify-content: center; color: #ffbf69;
+    box-shadow: 0 0 40px rgba(255,160,50,.25); transition: transform .15s;
+  }
+  #gate:hover #playBig { transform: scale(1.06); }
+  #playBig svg { width: 38px; height: 38px; fill: currentColor; }
 
-  /* speed slider group */
-  .speed {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    color: #9a9a9a;
-    font-size: 0.8rem;
-    font-weight: 500;
-    white-space: nowrap;
+  #toast {
+    position: fixed; top: 22px; left: 50%; transform: translateX(-50%) translateY(-80px);
+    background: rgba(30,30,30,.92); border: 1px solid rgba(255,191,105,.3);
+    color: #ffce8a; padding: 10px 20px; border-radius: 999px; font-size: .85rem; font-weight: 500;
+    z-index: 60; transition: transform .35s ease; pointer-events: none; white-space: nowrap;
   }
-  .speed #speedVal {
-    color: #ddd;
-    min-width: 34px;
-    text-align: center;
-    font-variant-numeric: tabular-nums;
-  }
+  #toast.show { transform: translateX(-50%) translateY(0); }
 
-  input[type="range"] {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 130px;
-    height: 4px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.18);
-    outline: none;
-    cursor: pointer;
+  #syncBanner {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 40;
+    background: linear-gradient(90deg, rgba(255,154,60,.18), rgba(255,191,105,.18));
+    border-bottom: 1px solid rgba(255,191,105,.3);
+    color: #ffce8a; text-align: center; padding: 10px; font-size: .9rem; font-weight: 700; display: none;
   }
-  input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 15px;
-    height: 15px;
-    border-radius: 50%;
-    background: #ffbf69;
-    box-shadow: 0 0 8px rgba(255, 191, 105, 0.6);
-    cursor: pointer;
-  }
-  input[type="range"]::-moz-range-thumb {
-    width: 15px;
-    height: 15px;
-    border: none;
-    border-radius: 50%;
-    background: #ffbf69;
-    box-shadow: 0 0 8px rgba(255, 191, 105, 0.6);
-    cursor: pointer;
-  }
+  #syncBanner.show { display: block; }
+  #syncBanner b { color: #fff; }
 
-  .divider {
-    width: 1px;
-    height: 26px;
-    background: rgba(255, 255, 255, 0.1);
-  }
-
-  @media (max-width: 640px) {
-    .line { font-size: 1.3rem; }
-    .line.active { font-size: 2.6rem; }
-    input[type="range"] { width: 90px; }
+  @media (max-width:640px){
+    .line{font-size:1.3rem;} .line.active{font-size:2.6rem;} #gate h1{font-size:2rem;}
   }
 </style>
 </head>
 <body>
-  <div id="stage">
-    <div id="track"></div>
-  </div>
+  <div id="syncBanner">🎙️ وضع المزامنة — اضغط <b>مسافة</b> مع بداية كل سطر. (اضغط <b>S</b> للإنهاء والحفظ)</div>
+
+  <div id="stage"><div id="track"></div></div>
+
+  <div id="timeLabel">0:00 / 0:00</div>
+  <div id="progress"><div id="progressFill"></div></div>
 
   <div id="bar">
-    <button id="prevBtn" class="btn" title="السطر السابق (→)" aria-label="السابق">
-      <svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
-    </button>
-
-    <button id="playBtn" class="btn" title="تشغيل/إيقاف (مسافة)" aria-label="تشغيل">
-      <!-- icon swapped by JS -->
-    </button>
-
-    <button id="nextBtn" class="btn" title="السطر التالي (←)" aria-label="التالي">
-      <svg viewBox="0 0 24 24"><path d="M16 6h2v12h-2zM6 6l8.5 6L6 18z"/></svg>
-    </button>
-
+    <button id="prevBtn" class="btn" title="السطر السابق (→)"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg></button>
+    <button id="playBtn" class="btn" title="تشغيل/إيقاف (مسافة)"></button>
+    <button id="nextBtn" class="btn" title="السطر التالي (←)"><svg viewBox="0 0 24 24"><path d="M16 6h2v12h-2zM6 6l8.5 6L6 18z"/></svg></button>
     <span class="divider"></span>
-
-    <div class="speed">
-      <span>السرعة</span>
-      <input id="speed" type="range" min="1" max="5" step="0.1" value="2.8" />
-      <span id="speedVal">2.8s</span>
-    </div>
-
+    <button id="autoBtn" class="btn" title="محاولة مزامنة تلقائية من الصوت"><svg viewBox="0 0 24 24"><path d="M13 3a9 9 0 1 0 8 8h-2a7 7 0 1 1-6-6V3z"/><path d="M13 7v6l4 2-.8 1.6L11 14V7z"/></svg></button>
+    <button id="syncBtn" class="btn" title="وضع المزامنة اليدوي (S)"><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg></button>
     <span class="divider"></span>
-
-    <button id="loopBtn" class="btn" title="تكرار" aria-label="تكرار">
-      <svg viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
-    </button>
+    <button id="loopBtn" class="btn on" title="تكرار"><svg viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg></button>
+    <button id="exportBtn" class="btn" title="تصدير التوقيتات (LRC)"><svg viewBox="0 0 24 24"><path d="M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z"/></svg></button>
   </div>
+
+  <div id="gate">
+    <h1>أبطى العصر</h1>
+    <div id="playBig"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
+    <p>اضغط للتشغيل — الكلمات تمشي مع الأغنية.<br>لأدق مزامنة: شغّل، ثم اضغط زر الميكروفون (أو حرف <b>S</b>) وانقر <b>مسافة</b> مع بداية كل سطر مرّة وحدة — ويتحفظ تلقائياً على جهازك.</p>
+  </div>
+
+  <div id="toast"></div>
+
+  <audio id="audio" src="song.mp3" preload="auto" loop></audio>
 
 <script>
   const LYRICS = [
-    "بطى العصر وانا اتحرى تدقين",
-    "دقي عساه الحي لو تم اذانه",
-    "يا بهجت الوجدان يا قرة العين",
-    "يا طلق الوجه الضاعني يالسانه",
-    "يا خوخ يا عرموط يا عنب يا تين",
-    "يا ترنج يا رمان يا بردقانه",
-    "يا شيخة النسوان يا قمة الزين",
-    "يعلو الأشياء يا سنام المكانه",
-    "يا ملح يا دلوعتي يا قبالين",
-    "يا نوثة الغضات يا خيزرانه",
-    "يا ملح يا دلوعتي يا قبالين",
-    "يا نوثة الغضات يا خيزرانه",
-    "يا اضخم مقفى يا انعم اطراف يالين",
-    "ليني لمن يقطع ظماك بحنانه",
-    "وافي طرف غصنك على راعي الدين",
-    "انتي لبن شلحاط ماتع مدانه",
-    "واعفاك عن دينه غلا كود ثنتين",
-    "الاوله حبك والاخرى الامانه",
-    "واعفاك عن دينه غلا كود ثنتين",
-    "الاوله حبك والاخرى الامانه",
-    "أمانتن ما تنعطى للموالين",
-    "ياكود ديانك عشانه عشانه",
-    "هيه عشانه من حساب المجانين",
-    "وانتي عسى يفداك زدتي جنانه",
-    "تكفين دقي عجلي مت تكفين",
-    "يا جوهره يا كهرمان ويا دانه",
-    "ابطى العصر وانا اتحرى تدقين",
-    "دقي عساه الحي لو تم اذانه",
-    "يا بهجت الوجدان يا قرة العين",
-    "يا طلق الوجه الضاعني يالسانه",
-    "يا خوخ يا عرموط يا عنب يا تين",
-    "يا ترنج يا رمان يا بردقانه",
-    "يا شيخة النسوان يا قمة الزين",
-    "يعلو الأشياء يا سنام المكانه"
+    "بطى العصر وانا اتحرى تدقين","دقي عساه الحي لو تم اذانه",
+    "يا بهجت الوجدان يا قرة العين","يا طلق الوجه الضاعني يالسانه",
+    "يا خوخ يا عرموط يا عنب يا تين","يا ترنج يا رمان يا بردقانه",
+    "يا شيخة النسوان يا قمة الزين","يعلو الأشياء يا سنام المكانه",
+    "يا ملح يا دلوعتي يا قبالين","يا نوثة الغضات يا خيزرانه",
+    "يا ملح يا دلوعتي يا قبالين","يا نوثة الغضات يا خيزرانه",
+    "يا اضخم مقفى يا انعم اطراف يالين","ليني لمن يقطع ظماك بحنانه",
+    "وافي طرف غصنك على راعي الدين","انتي لبن شلحاط ماتع مدانه",
+    "واعفاك عن دينه غلا كود ثنتين","الاوله حبك والاخرى الامانه",
+    "واعفاك عن دينه غلا كود ثنتين","الاوله حبك والاخرى الامانه",
+    "أمانتن ما تنعطى للموالين","ياكود ديانك عشانه عشانه",
+    "هيه عشانه من حساب المجانين","وانتي عسى يفداك زدتي جنانه",
+    "تكفين دقي عجلي مت تكفين","يا جوهره يا كهرمان ويا دانه",
+    "ابطى العصر وانا اتحرى تدقين","دقي عساه الحي لو تم اذانه",
+    "يا بهجت الوجدان يا قرة العين","يا طلق الوجه الضاعني يالسانه",
+    "يا خوخ يا عرموط يا عنب يا تين","يا ترنج يا رمان يا بردقانه",
+    "يا شيخة النسوان يا قمة الزين","يعلو الأشياء يا سنام المكانه"
   ];
 
-  const PLAY_ICON = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
-  const PAUSE_ICON = '<svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>';
+  // Pre-baked cue times (seconds). null = use saved/auto/even spread.
+  // Replace with exported values to ship a permanent sync for everyone.
+  const BAKED_CUES = null;
 
-  const track = document.getElementById('track');
-  const stage = document.getElementById('stage');
-  const playBtn = document.getElementById('playBtn');
-  const prevBtn = document.getElementById('prevBtn');
-  const nextBtn = document.getElementById('nextBtn');
-  const loopBtn = document.getElementById('loopBtn');
-  const speed = document.getElementById('speed');
-  const speedVal = document.getElementById('speedVal');
+  const PLAY='<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
+  const PAUSE='<svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>';
+  const $=id=>document.getElementById(id);
+  const audio=$('audio'), track=$('track'), stage=$('stage');
+  const playBtn=$('playBtn'), prevBtn=$('prevBtn'), nextBtn=$('nextBtn');
+  const loopBtn=$('loopBtn'), syncBtn=$('syncBtn'), autoBtn=$('autoBtn'), exportBtn=$('exportBtn');
+  const gate=$('gate'), toast=$('toast'), banner=$('syncBanner'), bar=$('bar');
+  const fill=$('progressFill'), timeLabel=$('timeLabel'), progress=$('progress');
+  const LS_KEY='abta_alasr_cues_v1';
 
-  let current = 0;
-  let playing = true;
-  let looping = true;
-  let advanceMs = 2800;
-  let timer = null;
+  let cues=[], current=-1, syncMode=false, syncIdx=0;
 
-  // Build the lines
-  const nodes = LYRICS.map((text, i) => {
-    const el = document.createElement('div');
-    el.className = 'line';
-    el.textContent = text;
-    el.dataset.index = i;
-    el.addEventListener('click', () => goTo(i));
-    track.appendChild(el);
-    return el;
+  const nodes=LYRICS.map((t,i)=>{
+    const el=document.createElement('div'); el.className='line'; el.textContent=t;
+    el.onclick=()=>{ if(cues[i]!=null) audio.currentTime=cues[i]; setActive(i); };
+    track.appendChild(el); return el;
   });
 
-  function render() {
-    nodes.forEach((el, i) => el.classList.toggle('active', i === current));
-    // center the active line vertically in the stage
-    const activeEl = nodes[current];
-    const offset = stage.clientHeight / 2 - (activeEl.offsetTop + activeEl.offsetHeight / 2);
-    track.style.transform = `translateY(${offset}px)`;
+  function loadCues(){
+    if(BAKED_CUES){ cues=BAKED_CUES.slice(); return 'baked'; }
+    try{ const s=JSON.parse(localStorage.getItem(LS_KEY)); if(Array.isArray(s)&&s.length===LYRICS.length){ cues=s; return 'saved'; } }catch(e){}
+    return null;
   }
-
-  function goTo(index) {
-    current = index;
-    render();
-    if (playing) schedule();
+  function evenSpread(){
+    const d=audio.duration||228.6, intro=Math.min(12,d*0.05), end=d-3;
+    const step=(end-intro)/LYRICS.length;
+    cues=LYRICS.map((_,i)=>+(intro+i*step).toFixed(2));
   }
+  function saveCues(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(cues)); }catch(e){} }
 
-  function next() {
-    if (current < LYRICS.length - 1) {
-      current++;
-    } else if (looping) {
-      current = 0;
-    } else {
-      pause();
-      return;
-    }
-    render();
+  function setActive(i){
+    if(i===current) return; current=i;
+    nodes.forEach((el,k)=>el.classList.toggle('active',k===i));
+    const a=nodes[i]; if(!a) return;
+    const off=stage.clientHeight/2-(a.offsetTop+a.offsetHeight/2);
+    track.style.transform=`translateY(${off}px)`;
   }
+  function lineAt(t){ let idx=0; for(let i=0;i<cues.length;i++){ if(cues[i]!=null && t>=cues[i]-0.02) idx=i; else break; } return idx; }
+  function fmt(s){ s=Math.max(0,s|0); return (s/60|0)+':'+String(s%60).padStart(2,'0'); }
 
-  function prev() {
-    current = current > 0 ? current - 1 : 0;
-    render();
+  function tick(){
+    if(!syncMode) setActive(lineAt(audio.currentTime));
+    const d=audio.duration||1;
+    fill.style.width=(audio.currentTime/d*100)+'%';
+    timeLabel.textContent=fmt(audio.currentTime)+' / '+fmt(d);
+    requestAnimationFrame(tick);
   }
+  function showToast(msg,ms=1800){ toast.textContent=msg; toast.classList.add('show'); clearTimeout(toast._t); toast._t=setTimeout(()=>toast.classList.remove('show'),ms); }
 
-  function schedule() {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      next();
-      if (playing) schedule();
-    }, advanceMs);
+  function start(){ gate.style.display='none'; audio.play().catch(()=>{}); }
+  function togglePlay(){ audio.paused?audio.play():audio.pause(); }
+  playBtn.onclick=togglePlay;
+  audio.onplay=()=>playBtn.innerHTML=PAUSE;
+  audio.onpause=()=>playBtn.innerHTML=PLAY;
+  gate.onclick=start;
+
+  prevBtn.onclick=()=>{ const i=Math.max(0,current-1); if(cues[i]!=null)audio.currentTime=cues[i]; setActive(i); };
+  nextBtn.onclick=()=>{ const i=Math.min(LYRICS.length-1,current+1); if(cues[i]!=null)audio.currentTime=cues[i]; setActive(i); };
+  loopBtn.onclick=()=>{ audio.loop=!audio.loop; loopBtn.classList.toggle('on',audio.loop); };
+  progress.onclick=e=>{ const r=progress.getBoundingClientRect(); audio.currentTime=(e.clientX-r.left)/r.width*(audio.duration||0); };
+
+  function toggleSync(){
+    syncMode=!syncMode;
+    banner.classList.toggle('show',syncMode);
+    syncBtn.classList.toggle('on',syncMode);
+    if(syncMode){ syncIdx=0; cues=LYRICS.map(()=>null); setActive(0); if(audio.paused)audio.play(); showToast('انقر مسافة مع كل سطر'); }
+    else { for(let i=0;i<cues.length;i++) if(cues[i]==null) cues[i]=+audio.currentTime.toFixed(2); saveCues(); showToast('✅ تم حفظ التوقيت',2200); }
   }
-
-  function play() {
-    playing = true;
-    playBtn.innerHTML = PAUSE_ICON;
-    schedule();
+  function tapSync(){
+    if(syncIdx>=LYRICS.length){ toggleSync(); return; }
+    cues[syncIdx]=+audio.currentTime.toFixed(2);
+    setActive(syncIdx); syncIdx++;
+    if(syncIdx>=LYRICS.length){ saveCues(); banner.classList.remove('show'); syncBtn.classList.remove('on'); syncMode=false; showToast('✅ خلّصت كل الأسطر — محفوظ',2400); }
   }
+  syncBtn.onclick=toggleSync;
 
-  function pause() {
-    playing = false;
-    playBtn.innerHTML = PLAY_ICON;
-    clearTimeout(timer);
-  }
+  autoBtn.onclick=async ()=>{
+    showToast('⏳ أحلّل الصوت...',60000);
+    try{
+      const buf=await (await fetch('song.mp3')).arrayBuffer();
+      const ac=new (window.AudioContext||window.webkitAudioContext)();
+      const ab=await ac.decodeAudioData(buf);
+      const ch=ab.getChannelData(0), sr=ab.sampleRate;
+      const hop=Math.floor(sr*0.03);
+      const energies=[];
+      for(let i=0;i+hop<ch.length;i+=hop){ let s=0; for(let j=0;j<hop;j++){const v=ch[i+j];s+=v*v;} energies.push(Math.sqrt(s/hop)); }
+      const onset=energies.map((e,i)=> i? Math.max(0,e-energies[i-1]) : 0);
+      const t=i=>i*hop/sr;
+      const minGap=Math.max(1.2,(ab.duration*0.6)/LYRICS.length);
+      const win=Math.max(1,Math.round(0.25*sr/hop));
+      const peaks=[];
+      for(let i=1;i<onset.length-1;i++){
+        let isMax=true;
+        for(let k=Math.max(0,i-win);k<=Math.min(onset.length-1,i+win);k++){ if(onset[k]>onset[i]){isMax=false;break;} }
+        if(isMax && onset[i]>0) peaks.push([t(i),onset[i]]);
+      }
+      peaks.sort((a,b)=>b[1]-a[1]);
+      const chosen=[];
+      for(const [time] of peaks){ if(chosen.every(c=>Math.abs(c-time)>=minGap)) chosen.push(time); if(chosen.length>=LYRICS.length) break; }
+      chosen.sort((a,b)=>a-b);
+      if(chosen.length>=LYRICS.length*0.6){
+        while(chosen.length<LYRICS.length){ chosen.push(Math.min(ab.duration-1,(chosen[chosen.length-1]||0)+minGap)); }
+        cues=chosen.slice(0,LYRICS.length).map(x=>+x.toFixed(2)); saveCues();
+        showToast('✅ مزامنة تلقائية جاهزة — عدّل بالنقر لو تبي',2800);
+      } else showToast('تعذّر التحليل — استخدم وضع النقر (S)',2800);
+      ac.close();
+    }catch(e){ showToast('تعذّر تحليل الصوت — استخدم وضع النقر (S)',2800); }
+  };
 
-  function togglePlay() {
-    playing ? pause() : play();
-  }
+  exportBtn.onclick=()=>{
+    const lrc=LYRICS.map((l,i)=>{ const s=cues[i]||0; const m=String(Math.floor(s/60)).padStart(2,'0'); const ss=(s%60).toFixed(2).padStart(5,'0'); return `[${m}:${ss}]${l}`; }).join('\n');
+    const arr='const BAKED_CUES = ['+cues.map(c=>(c==null?0:c)).join(',')+'];';
+    const blob=new Blob([lrc+'\n\n// paste into BAKED_CUES to ship permanently:\n'+arr],{type:'text/plain'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='abta-alasr.lrc'; a.click();
+    showToast('⬇️ تم تنزيل ملف التوقيت');
+  };
 
-  // ===== Controls =====
-  playBtn.addEventListener('click', togglePlay);
-  prevBtn.addEventListener('click', () => { prev(); if (playing) schedule(); });
-  nextBtn.addEventListener('click', () => { next(); if (playing) schedule(); });
-
-  loopBtn.addEventListener('click', () => {
-    looping = !looping;
-    loopBtn.classList.toggle('on', looping);
+  document.addEventListener('keydown',e=>{
+    if(e.code==='Space'){ e.preventDefault(); syncMode?tapSync():togglePlay(); }
+    else if(e.code==='KeyS'){ e.preventDefault(); toggleSync(); }
+    else if(e.code==='ArrowLeft'){ e.preventDefault(); nextBtn.click(); }
+    else if(e.code==='ArrowRight'){ e.preventDefault(); prevBtn.click(); }
   });
 
-  speed.addEventListener('input', () => {
-    advanceMs = parseFloat(speed.value) * 1000;
-    speedVal.textContent = parseFloat(speed.value).toFixed(1) + 's';
-    if (playing) schedule();
-  });
+  let barT; document.addEventListener('mousemove',()=>{ bar.classList.add('show'); clearTimeout(barT); barT=setTimeout(()=>bar.classList.remove('show'),2200); });
 
-  document.addEventListener('keydown', (e) => {
-    switch (e.code) {
-      case 'Space':
-        e.preventDefault();
-        togglePlay();
-        break;
-      // left = back, right = forward (per spec)
-      case 'ArrowLeft':
-        e.preventDefault();
-        prev();
-        if (playing) schedule();
-        break;
-      case 'ArrowRight':
-        e.preventDefault();
-        next();
-        if (playing) schedule();
-        break;
-    }
-  });
-
-  // Re-center on resize / font load
-  window.addEventListener('resize', render);
-  if (document.fonts && document.fonts.ready) {
-    document.fonts.ready.then(render);
+  playBtn.innerHTML=PLAY;
+  function init(){
+    const src=loadCues();
+    if(!src) evenSpread();
+    setActive(0);
+    if(src==='saved') showToast('استرجعت توقيتك المحفوظ');
   }
-
-  // ===== Init =====
-  loopBtn.classList.toggle('on', looping);
-  playBtn.innerHTML = PAUSE_ICON;
-  render();
-  play();
+  if(audio.readyState>=1) init(); else audio.addEventListener('loadedmetadata',init,{once:true});
+  requestAnimationFrame(tick);
 </script>
 </body>
 </html>

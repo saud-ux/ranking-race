@@ -202,9 +202,9 @@
     "يا شيخة النسوان يا قمة الزين","يعلو الأشياء يا سنام المكانه"
   ];
 
-  // Pre-baked cue times (seconds). null = use saved/auto/even spread.
-  // Replace with exported values to ship a permanent sync for everyone.
-  const BAKED_CUES = null;
+  // Pre-baked cue times (seconds) — synced to song.mp3 (3:48).
+  // Lines 1–30 from manual sync; last 4 (closing chorus) spread to the song's end.
+  const BAKED_CUES = [14.4,18.72,23.12,27.29,31.94,36.2,40.75,44.82,58,63,99.3,103.7,108.37,112.82,131.62,135.85,140.44,144.51,157.93,162.49,166.73,170.81,184.36,188.48,192.96,197.45,201.73,206.2,210.63,215.57,218.68,221.79,224.9,228.0];
 
   const PLAY='<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
   const PAUSE='<svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>';

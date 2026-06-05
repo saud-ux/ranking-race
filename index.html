@@ -117,15 +117,44 @@
   #syncBanner.show { display: block; }
   #syncBanner b { color: #fff; }
 
+  /* tap pad for mobile sync */
+  #tapPad {
+    position: fixed; inset: 0; z-index: 45; display: none;
+    flex-direction: column; align-items: center; justify-content: flex-end;
+    padding-bottom: 12vh; gap: 18px; background: transparent; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #tapPad.show { display: flex; }
+  #tapCircle {
+    width: 150px; height: 150px; border-radius: 50%;
+    background: rgba(255,191,105,.14); border: 2px solid rgba(255,191,105,.55);
+    display: flex; align-items: center; justify-content: center;
+    color: #ffce8a; font-weight: 900; font-size: 1.15rem; text-align: center;
+    box-shadow: 0 0 40px rgba(255,160,50,.25);
+  }
+  #tapPad:active #tapCircle { transform: scale(.94); background: rgba(255,191,105,.25); }
+  #tapCount { color: #ffce8a; font-weight: 700; font-size: .95rem; }
+  #tapDone {
+    pointer-events: auto; background: rgba(255,255,255,.1); color: #fff;
+    border: 1px solid rgba(255,255,255,.2); border-radius: 999px;
+    padding: 10px 22px; font-family: inherit; font-size: .9rem; font-weight: 700; cursor: pointer;
+  }
+
   @media (max-width:640px){
     .line{font-size:1.3rem;} .line.active{font-size:2.6rem;} #gate h1{font-size:2rem;}
   }
 </style>
 </head>
 <body>
-  <div id="syncBanner">🎙️ وضع المزامنة — اضغط <b>مسافة</b> مع بداية كل سطر. (اضغط <b>S</b> للإنهاء والحفظ)</div>
+  <div id="syncBanner">🎙️ وضع المزامنة — <b>انقر الشاشة</b> مع بداية كل سطر</div>
 
   <div id="stage"><div id="track"></div></div>
+
+  <div id="tapPad">
+    <div id="tapCircle">انقر<br>مع كل سطر</div>
+    <div id="tapCount">السطر 1 / 34</div>
+    <button id="tapDone">إنهاء وحفظ</button>
+  </div>
 
   <div id="timeLabel">0:00 / 0:00</div>
   <div id="progress"><div id="progressFill"></div></div>
@@ -145,7 +174,7 @@
   <div id="gate">
     <h1>أبطى العصر</h1>
     <div id="playBig"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
-    <p>اضغط للتشغيل — الكلمات تمشي مع الأغنية.<br>لأدق مزامنة: شغّل، ثم اضغط زر الميكروفون (أو حرف <b>S</b>) وانقر <b>مسافة</b> مع بداية كل سطر مرّة وحدة — ويتحفظ تلقائياً على جهازك.</p>
+    <p>اضغط للتشغيل — الكلمات تمشي مع الأغنية.<br>لأدق مزامنة: اضغط زر الميكروفون 🎤 ثم <b>انقر الشاشة</b> مع بداية كل سطر مرّة وحدة — ويتحفظ تلقائياً على جهازك.</p>
   </div>
 
   <div id="toast"></div>
@@ -238,20 +267,31 @@
   loopBtn.onclick=()=>{ audio.loop=!audio.loop; loopBtn.classList.toggle('on',audio.loop); };
   progress.onclick=e=>{ const r=progress.getBoundingClientRect(); audio.currentTime=(e.clientX-r.left)/r.width*(audio.duration||0); };
 
-  function toggleSync(){
-    syncMode=!syncMode;
-    banner.classList.toggle('show',syncMode);
-    syncBtn.classList.toggle('on',syncMode);
-    if(syncMode){ syncIdx=0; cues=LYRICS.map(()=>null); setActive(0); if(audio.paused)audio.play(); showToast('انقر مسافة مع كل سطر'); }
-    else { for(let i=0;i<cues.length;i++) if(cues[i]==null) cues[i]=+audio.currentTime.toFixed(2); saveCues(); showToast('✅ تم حفظ التوقيت',2200); }
+  const tapPad=$('tapPad'), tapCount=$('tapCount'), tapDone=$('tapDone');
+  function updateTapCount(){ tapCount.textContent='السطر '+Math.min(syncIdx+1,LYRICS.length)+' / '+LYRICS.length; }
+  function enterSync(){
+    syncMode=true; syncIdx=0; cues=LYRICS.map(()=>null);
+    banner.classList.add('show'); syncBtn.classList.add('on'); tapPad.classList.add('show');
+    setActive(0); updateTapCount(); if(audio.paused)audio.play();
+    showToast('انقر الشاشة مع كل سطر',2200);
   }
+  function exitSync(){
+    for(let i=0;i<cues.length;i++) if(cues[i]==null) cues[i]=+audio.currentTime.toFixed(2);
+    syncMode=false; banner.classList.remove('show'); syncBtn.classList.remove('on'); tapPad.classList.remove('show');
+    saveCues(); showToast('✅ تم حفظ التوقيت',2400);
+  }
+  function toggleSync(){ syncMode?exitSync():enterSync(); }
   function tapSync(){
-    if(syncIdx>=LYRICS.length){ toggleSync(); return; }
+    if(!syncMode) return;
+    if(syncIdx>=LYRICS.length){ exitSync(); return; }
     cues[syncIdx]=+audio.currentTime.toFixed(2);
-    setActive(syncIdx); syncIdx++;
-    if(syncIdx>=LYRICS.length){ saveCues(); banner.classList.remove('show'); syncBtn.classList.remove('on'); syncMode=false; showToast('✅ خلّصت كل الأسطر — محفوظ',2400); }
+    setActive(syncIdx); syncIdx++; updateTapCount();
+    if(syncIdx>=LYRICS.length){ saveCues(); syncMode=false; banner.classList.remove('show'); syncBtn.classList.remove('on'); tapPad.classList.remove('show'); showToast('✅ خلّصت كل الأسطر — محفوظ',2600); }
   }
   syncBtn.onclick=toggleSync;
+  // tap anywhere on the pad records the next line (mobile-friendly)
+  tapPad.addEventListener('click', e=>{ if(e.target===tapDone) return; tapSync(); });
+  tapDone.addEventListener('click', e=>{ e.stopPropagation(); exitSync(); });
 
   autoBtn.onclick=async ()=>{
     showToast('⏳ أحلّل الصوت...',60000);

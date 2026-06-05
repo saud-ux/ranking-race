@@ -65,11 +65,11 @@
   /* ===== Control bar ===== */
   #bar {
     position: fixed; left: 50%; bottom: 0; transform: translateX(-50%);
-    display: flex; align-items: center; gap: 18px;
-    padding: 14px 24px; margin-bottom: 18px; border-radius: 999px;
+    display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 14px;
+    max-width: 94vw; padding: 12px 20px; margin-bottom: 16px; border-radius: 26px;
     background: rgba(20,20,20,.6); border: 1px solid rgba(255,255,255,.06);
     backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-    opacity: .3; transition: opacity .35s ease; z-index: 10; direction: ltr;
+    opacity: .35; transition: opacity .35s ease; z-index: 10; direction: ltr;
   }
   #bar:hover, #bar.show { opacity: 1; }
   .btn {
@@ -147,6 +147,9 @@
 
   @media (max-width:640px){
     .line{font-size:1.05rem;} .line.active{font-size:3rem;} #gate h1{font-size:2rem;}
+    #bar{ gap:8px; padding:10px 12px; }
+    .btn{ width:38px; height:38px; }
+    .divider{ display:none; }
   }
 </style>
 </head>
@@ -229,7 +232,7 @@
 
   let cues=[], current=-1, syncMode=false, syncIdx=0;
   // lead = how many seconds EARLIER lines light up (read-ahead). Persisted.
-  let lead=(()=>{ const v=parseFloat(localStorage.getItem(LEAD_KEY)); return isNaN(v)?0.5:v; })();
+  let lead=(()=>{ const v=parseFloat(localStorage.getItem(LEAD_KEY)); return isNaN(v)?2:v; })();
 
   const nodes=LYRICS.map((t,i)=>{
     const el=document.createElement('div'); el.className='line'; el.textContent=t;

@@ -155,6 +155,7 @@ const io = new Server(httpServer);
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/host', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'host.html')));
+app.get('/karaoke', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'karaoke.html')));
 
 const rooms = new Map();
 

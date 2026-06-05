@@ -232,7 +232,7 @@
 
   let cues=[], current=-1, syncMode=false, syncIdx=0;
   // lead = how many seconds EARLIER lines light up (read-ahead). Persisted.
-  let lead=(()=>{ const v=parseFloat(localStorage.getItem(LEAD_KEY)); return isNaN(v)?2:v; })();
+  let lead=(()=>{ const v=parseFloat(localStorage.getItem(LEAD_KEY)); return isNaN(v)?0:v; })();
 
   const nodes=LYRICS.map((t,i)=>{
     const el=document.createElement('div'); el.className='line'; el.textContent=t;

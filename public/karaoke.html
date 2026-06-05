@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>كاريوكي · قراءة مع الإيقاع</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --amber: #ffb347;
+    --advance-ms: 2800ms;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    background: var(--bg);
+    background-image: radial-gradient(
+      ellipse 70% 55% at 50% 50%,
+      rgba(255, 160, 60, 0.10) 0%,
+      rgba(255, 140, 40, 0.04) 35%,
+      rgba(10, 10, 10, 0) 75%
+    );
+    font-family: "Tajawal", sans-serif;
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* ---- Stage ---- */
+  #stage {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* fade masks top & bottom so lines dissolve into the dark */
+  #stage::before,
+  #stage::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 30vh;
+    z-index: 2;
+    pointer-events: none;
+  }
+  #stage::before {
+    top: 0;
+    background: linear-gradient(to bottom, var(--bg) 5%, rgba(10,10,10,0) 100%);
+  }
+  #stage::after {
+    bottom: 0;
+    background: linear-gradient(to top, var(--bg) 5%, rgba(10,10,10,0) 100%);
+  }
+
+  #track {
+    position: absolute;
+    left: 0;
+    right: 0;
+    /* translateY is set from JS; transition gives the smooth scroll */
+    transition: transform 0.7s cubic-bezier(0.25, 0.1, 0.25, 1);
+    will-change: transform;
+    text-align: center;
+    padding: 0 6vw;
+  }
+
+  .line {
+    font-size: 1.8rem;
+    font-weight: 500;
+    line-height: 1.5;
+    opacity: 0.3;
+    color: #fff;
+    padding: 0.85rem 0;
+    transition:
+      opacity 0.6s ease,
+      transform 0.6s ease,
+      font-size 0.6s ease,
+      color 0.6s ease;
+    transform: scale(0.85);
+  }
+
+  .line.active {
+    font-size: 5rem;
+    font-weight: 700;
+    opacity: 1;
+    color: #ffffff;
+    transform: scale(1);
+    text-shadow:
+      0 0 12px rgba(255, 179, 71, 0.55),
+      0 0 34px rgba(255, 150, 50, 0.40),
+      0 0 70px rgba(255, 140, 40, 0.22);
+    animation: pulse 2.8s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.035); }
+  }
+
+  /* ---- Bottom control bar ---- */
+  #bar {
+    position: relative;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1.5rem;
+    padding: 0.9rem 1.4rem;
+    background: rgba(20, 20, 20, 0.55);
+    backdrop-filter: blur(10px);
+    border-top: 1px solid rgba(255, 179, 71, 0.10);
+    flex-wrap: wrap;
+  }
+
+  .ctrl {
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: #fff;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color 0.2s, background 0.2s, color 0.2s;
+    flex-shrink: 0;
+  }
+  .ctrl:hover { border-color: rgba(255, 179, 71, 0.6); background: rgba(255,179,71,0.08); }
+  .ctrl svg { width: 22px; height: 22px; display: block; }
+
+  .ctrl.on {
+    color: var(--amber);
+    border-color: var(--amber);
+    background: rgba(255, 179, 71, 0.12);
+  }
+
+  #speed-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    color: rgba(255,255,255,0.6);
+    font-size: 0.95rem;
+    direction: ltr;
+  }
+
+  #speed {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 150px;
+    height: 4px;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.18);
+    outline: none;
+    cursor: pointer;
+  }
+  #speed::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: var(--amber);
+    box-shadow: 0 0 8px rgba(255,179,71,0.6);
+    cursor: pointer;
+  }
+  #speed::-moz-range-thumb {
+    width: 16px; height: 16px;
+    border: none;
+    border-radius: 50%;
+    background: var(--amber);
+    box-shadow: 0 0 8px rgba(255,179,71,0.6);
+    cursor: pointer;
+  }
+  #speed-val {
+    min-width: 2.6rem;
+    text-align: center;
+    color: var(--amber);
+    font-variant-numeric: tabular-nums;
+  }
+
+  @media (max-width: 600px) {
+    .line { font-size: 1.3rem; }
+    .line.active { font-size: 2.6rem; }
+    #speed { width: 110px; }
+  }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <div id="track"></div>
+  </div>
+
+  <div id="bar">
+    <button id="play" class="ctrl" aria-label="إيقاف / تشغيل" title="مسافة: إيقاف/تشغيل"></button>
+
+    <div id="speed-wrap">
+      <span aria-hidden="true">🐢</span>
+      <input id="speed" type="range" min="1" max="5" step="0.1" value="2.8" aria-label="السرعة">
+      <span aria-hidden="true">🐇</span>
+      <span id="speed-val">2.8s</span>
+    </div>
+
+    <button id="loop" class="ctrl" aria-label="تكرار" title="تكرار من البداية">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+        <path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+      </svg>
+    </button>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  const LYRICS = [
+    "بطى العصر وانا اتحرى تدقين",
+    "دقي عساه الحي لو تم اذانه",
+    "يا بهجت الوجدان يا قرة العين",
+    "يا طلق الوجه الضاعني يالسانه",
+    "يا خوخ يا عرموط يا عنب يا تين",
+    "يا ترنج يا رمان يا بردقانه",
+    "يا شيخة النسوان يا قمة الزين",
+    "يعلو الأشياء يا سنام المكانه",
+    "يا ملح يا دلوعتي يا قبالين",
+    "يا نوثة الغضات يا خيزرانه",
+    "يا ملح يا دلوعتي يا قبالين",
+    "يا نوثة الغضات يا خيزرانه",
+    "يا اضخم مقفى يا انعم اطراف يالين",
+    "ليني لمن يقطع ظماك بحنانه",
+    "وافي طرف غصنك على راعي الدين",
+    "انتي لبن شلحاط ماتع مدانه",
+    "واعفاك عن دينه غلا كود ثنتين",
+    "الاوله حبك والاخرى الامانه",
+    "واعفاك عن دينه غلا كود ثنتين",
+    "الاوله حبك والاخرى الامانه",
+    "أمانتن ما تنعطى للموالين",
+    "ياكود ديانك عشانه عشانه",
+    "هيه عشانه من حساب المجانين",
+    "وانتي عسى يفداك زدتي جنانه",
+    "تكفين دقي عجلي مت تكفين",
+    "يا جوهره يا كهرمان ويا دانه",
+    "ابطى العصر وانا اتحرى تدقين",
+    "دقي عساه الحي لو تم اذانه",
+    "يا بهجت الوجدان يا قرة العين",
+    "يا طلق الوجه الضاعني يالسانه",
+    "يا خوخ يا عرموط يا عنب يا تين",
+    "يا ترنج يا رمان يا بردقانه",
+    "يا شيخة النسوان يا قمة الزين",
+    "يعلو الأشياء يا سنام المكانه"
+  ];
+
+  // SVG icons for the play/pause button
+  const ICON_PLAY = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+  const ICON_PAUSE = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>';
+
+  const stage = document.getElementById("stage");
+  const track = document.getElementById("track");
+  const playBtn = document.getElementById("play");
+  const loopBtn = document.getElementById("loop");
+  const speed = document.getElementById("speed");
+  const speedVal = document.getElementById("speed-val");
+
+  let current = 0;
+  let playing = true;
+  let looping = false;
+  let intervalMs = 2800;
+  let timer = null;
+  const lineEls = [];
+
+  // Build the lines
+  LYRICS.forEach((text, i) => {
+    const el = document.createElement("div");
+    el.className = "line";
+    el.textContent = text;
+    el.dataset.index = i;
+    el.addEventListener("click", () => goTo(i));
+    track.appendChild(el);
+    lineEls.push(el);
+  });
+
+  // Center the active line by translating the track so the active
+  // element's center sits at the stage's center.
+  function recenter() {
+    const active = lineEls[current];
+    const stageMid = stage.clientHeight / 2;
+    const lineMid = active.offsetTop + active.offsetHeight / 2;
+    track.style.transform = `translateY(${stageMid - lineMid}px)`;
+  }
+
+  function render() {
+    lineEls.forEach((el, i) => el.classList.toggle("active", i === current));
+    recenter();
+  }
+
+  function goTo(index) {
+    if (index < 0) index = 0;
+    if (index >= LYRICS.length) index = LYRICS.length - 1;
+    current = index;
+    render();
+    if (playing) restartTimer();
+  }
+
+  function advance() {
+    if (current < LYRICS.length - 1) {
+      current++;
+    } else if (looping) {
+      current = 0;
+    } else {
+      // reached the end, no loop -> pause
+      setPlaying(false);
+      return;
+    }
+    render();
+  }
+
+  function restartTimer() {
+    clearInterval(timer);
+    timer = setInterval(advance, intervalMs);
+  }
+
+  function setPlaying(state) {
+    playing = state;
+    playBtn.innerHTML = playing ? ICON_PAUSE : ICON_PLAY;
+    if (playing) {
+      // if at the very end with no loop, restart from top on play
+      if (current >= LYRICS.length - 1 && !looping) {
+        current = 0;
+        render();
+      }
+      restartTimer();
+    } else {
+      clearInterval(timer);
+    }
+  }
+
+  // ---- Controls ----
+  playBtn.addEventListener("click", () => setPlaying(!playing));
+
+  loopBtn.addEventListener("click", () => {
+    looping = !looping;
+    loopBtn.classList.toggle("on", looping);
+  });
+
+  speed.addEventListener("input", () => {
+    intervalMs = parseFloat(speed.value) * 1000;
+    speedVal.textContent = parseFloat(speed.value).toFixed(1) + "s";
+    if (playing) restartTimer();
+  });
+
+  // ---- Keyboard ----
+  document.addEventListener("keydown", (e) => {
+    switch (e.key) {
+      case " ":
+      case "Spacebar":
+        e.preventDefault();
+        setPlaying(!playing);
+        break;
+      case "ArrowLeft":   // jump back one line
+        e.preventDefault();
+        goTo(current - 1);
+        break;
+      case "ArrowRight":  // jump forward one line
+        e.preventDefault();
+        goTo(current + 1);
+        break;
+    }
+  });
+
+  window.addEventListener("resize", recenter);
+
+  // ---- Boot straight into karaoke mode ----
+  render();
+  setPlaying(true);
+})();
+</script>
+</body>
+</html>

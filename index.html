@@ -82,6 +82,9 @@
   .btn svg { width: 22px; height: 22px; fill: currentColor; }
   .btn.on { color: #ffbf69; background: rgba(255,191,105,.12); }
   .divider { width: 1px; height: 26px; background: rgba(255,255,255,.1); }
+  .lead { display: flex; align-items: center; gap: 4px; }
+  .btn.small { width: 30px; height: 30px; font-size: 1.3rem; font-weight: 700; line-height: 1; }
+  #leadVal { min-width: 46px; text-align: center; font-size: .8rem; color: #ffce8a; font-weight: 700; font-variant-numeric: tabular-nums; }
 
   /* ===== Overlays ===== */
   #gate {
@@ -171,6 +174,12 @@
     <span class="divider"></span>
     <button id="loopBtn" class="btn on" title="تكرار"><svg viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg></button>
     <button id="exportBtn" class="btn" title="تصدير التوقيتات (LRC)"><svg viewBox="0 0 24 24"><path d="M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z"/></svg></button>
+    <span class="divider"></span>
+    <div class="lead" title="تقديم/تأخير ظهور الكلمات">
+      <button id="leadDown" class="btn small" aria-label="تأخير">−</button>
+      <span id="leadVal">0.0s</span>
+      <button id="leadUp" class="btn small" aria-label="تقديم">+</button>
+    </div>
   </div>
 
   <div id="gate">
@@ -215,9 +224,12 @@
   const loopBtn=$('loopBtn'), syncBtn=$('syncBtn'), autoBtn=$('autoBtn'), exportBtn=$('exportBtn');
   const gate=$('gate'), toast=$('toast'), banner=$('syncBanner'), bar=$('bar');
   const fill=$('progressFill'), timeLabel=$('timeLabel'), progress=$('progress');
-  const LS_KEY='abta_alasr_cues_v1';
+  const leadDown=$('leadDown'), leadUp=$('leadUp'), leadVal=$('leadVal');
+  const LS_KEY='abta_alasr_cues_v1', LEAD_KEY='abta_alasr_lead_v1';
 
   let cues=[], current=-1, syncMode=false, syncIdx=0;
+  // lead = how many seconds EARLIER lines light up (read-ahead). Persisted.
+  let lead=(()=>{ const v=parseFloat(localStorage.getItem(LEAD_KEY)); return isNaN(v)?0.5:v; })();
 
   const nodes=LYRICS.map((t,i)=>{
     const el=document.createElement('div'); el.className='line'; el.textContent=t;
@@ -237,6 +249,16 @@
   }
   function saveCues(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(cues)); }catch(e){} }
 
+  function renderLead(){ leadVal.textContent=(lead>0?'+':'')+lead.toFixed(1)+'s'; }
+  function setLead(v){
+    lead=Math.max(-3,Math.min(8,Math.round(v*10)/10));
+    try{ localStorage.setItem(LEAD_KEY,lead); }catch(e){}
+    renderLead(); current=-1; setActive(lineAt(audio.currentTime));
+    showToast('تقديم الكلمات: '+(lead>0?'+':'')+lead.toFixed(1)+' ثانية',1200);
+  }
+  leadUp.onclick=()=>setLead(lead+0.5);
+  leadDown.onclick=()=>setLead(lead-0.5);
+
   function setActive(i){
     if(i===current) return; current=i;
     nodes.forEach((el,k)=>{ el.classList.toggle('active',k===i); el.classList.toggle('near',k===i-1||k===i+1); });
@@ -244,7 +266,7 @@
     const off=stage.clientHeight/2-(a.offsetTop+a.offsetHeight/2);
     track.style.transform=`translateY(${off}px)`;
   }
-  function lineAt(t){ let idx=0; for(let i=0;i<cues.length;i++){ if(cues[i]!=null && t>=cues[i]-0.02) idx=i; else break; } return idx; }
+  function lineAt(t){ t+=lead; let idx=0; for(let i=0;i<cues.length;i++){ if(cues[i]!=null && t>=cues[i]-0.02) idx=i; else break; } return idx; }
   function fmt(s){ s=Math.max(0,s|0); return (s/60|0)+':'+String(s%60).padStart(2,'0'); }
 
   function tick(){
@@ -340,11 +362,14 @@
     else if(e.code==='KeyS'){ e.preventDefault(); toggleSync(); }
     else if(e.code==='ArrowLeft'){ e.preventDefault(); nextBtn.click(); }
     else if(e.code==='ArrowRight'){ e.preventDefault(); prevBtn.click(); }
+    else if(e.code==='ArrowUp'){ e.preventDefault(); setLead(lead+0.5); }
+    else if(e.code==='ArrowDown'){ e.preventDefault(); setLead(lead-0.5); }
   });
 
   let barT; document.addEventListener('mousemove',()=>{ bar.classList.add('show'); clearTimeout(barT); barT=setTimeout(()=>bar.classList.remove('show'),2200); });
 
   playBtn.innerHTML=PLAY;
+  renderLead();
   function init(){
     const src=loadCues();
     if(!src) evenSpread();

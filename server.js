@@ -36,7 +36,7 @@ function normalizeArabic(raw) {
   let s = String(raw);
   s = s.trim().replace(/\s+/g, ' ');                                         // 1 trim/collapse
   s = s.replace(/ـ/g, '');                                              // 2 tatweel ـ
-  s = s.replace(/[ؐ-ًؚ-ٰٟ]/g, '');                  // 3 diacritics/tashkeel
+  s = s.replace(/[ؐ-ًؚ-ٰٟ]/g, '');                  // 3 diacritics/tashkeel
   s = s.replace(/[أإآٱ]/g, 'ا');                    // 4 alef variants → ا
   s = s.replace(/ى/g, 'ي');                                         // 5 ى → ي
   s = s.replace(/ة/g, 'ه');                                         // 6 ة → ه
@@ -421,17 +421,25 @@ function endRound(room) {
 }
 
 // ─── GC: collect stale rooms ──────────────────────────────────────────────────
+// Fix: previously `hostLastSeenAt` was only refreshed on (re)connect or
+// disconnect, so an actively-connected host would be timed out after 10
+// minutes and the room silently destroyed. Now: while the host socket is
+// alive, treat the room as fresh. Also clean up duel timers on GC.
 
 setInterval(() => {
   const now = Date.now();
   for (const [code, room] of rooms) {
+    const hostAlive = room.hostSocketId && io.sockets.sockets.get(room.hostSocketId);
+    if (hostAlive) { room.hostLastSeenAt = now; continue; }
     if (now - room.hostLastSeenAt > HOST_GRACE_MS) {
       for (const p of room.players.values()) {
         const s = io.sockets.sockets.get(p.socketId);
         if (s) s.emit('room:closed');
       }
-      if (room.round?.timer) clearTimeout(room.round.timer);
+      if (room.round?.timer)        clearTimeout(room.round.timer);
       if (room.round?.tickInterval) clearInterval(room.round.tickInterval);
+      if (room.duel?.timer)         clearTimeout(room.duel.timer);
+      if (room.duel?.tickInterval)  clearInterval(room.duel.tickInterval);
       rooms.delete(code);
     }
   }
@@ -460,6 +468,7 @@ io.on('connection', (socket) => {
       round: null,
       roundNumber: 0,
       scores: new Map(),
+      lastRoundScores: null,   // preserved for leaderboard refreshes after manual score adjustment
       // ── Gulag state ──
       gulagWaiting: null,      // playerId currently waiting in the gulag for an opponent
       pendingGulag: null,      // playerId proposed for the gulag, awaiting host decision
@@ -498,10 +507,15 @@ io.on('connection', (socket) => {
       players: playerListPayload(room),
       phase: room.phase,
       roundNumber: room.roundNumber,
+      // Reconnecting mid-round: restore the host's live category + countdown panel
+      roundInfo: room.phase === 'round' && room.round ? {
+        category: room.round.category,
+        endsAt: room.round.endsAt,
+      } : null,
       adjGroups: room.phase === 'adjudication' ? room.round?.groupResult?.groups : null,
       adjCategory: room.phase === 'adjudication' ? room.round?.category : null,
       leaderboard: ['results', 'finished'].includes(room.phase)
-        ? (room.phase === 'finished' && isGulagGame ? buildGulagFinal(room) : buildLeaderboard(room, new Map()))
+        ? (room.phase === 'finished' && isGulagGame ? buildGulagFinal(room) : buildLeaderboard(room, room.lastRoundScores || new Map()))
         : null,
       // ── Gulag / duel restoration ──
       pendingGulag: room.pendingGulag ? {
@@ -542,6 +556,31 @@ io.on('connection', (socket) => {
     broadcastPlayerList(room);
   });
 
+  // HOST: manually add/subtract points for a single player
+  socket.on('host:adjust_score', ({ code, playerId, delta }, cb) => {
+    const room = rooms.get(code);
+    if (!room || room.hostSocketId !== socket.id) return cb?.({ ok: false });
+    if (!room.players.has(playerId)) return cb?.({ ok: false, error: 'لاعب غير موجود' });
+    const d = Number(delta);
+    if (!Number.isFinite(d) || d === 0) return cb?.({ ok: false });
+
+    room.scores.set(playerId, (room.scores.get(playerId) ?? 0) + d);
+    broadcastPlayerList(room);
+
+    // If a leaderboard is currently being shown, refresh it so the new total appears
+    if (room.phase === 'results') {
+      emitToRoom(room, 'round:results', {
+        leaderboard: buildLeaderboard(room, room.lastRoundScores || new Map()),
+        roundNumber: room.roundNumber,
+      });
+    } else if (room.phase === 'finished') {
+      const isGulagGame = room.eliminationOrder.length > 0 || room.gulagWaiting !== null;
+      const lb = isGulagGame ? buildGulagFinal(room) : buildLeaderboard(room, new Map());
+      emitToRoom(room, 'game:finished', { leaderboard: lb });
+    }
+    cb?.({ ok: true, newScore: room.scores.get(playerId) });
+  });
+
   // HOST: start a round
   socket.on('host:start_round', ({ code, category }, cb) => {
     const room = rooms.get(code);
@@ -579,6 +618,7 @@ io.on('connection', (socket) => {
     const adjMap = new Map((decisions || []).map(d => [d.key, d.valid]));
     const { groups, perPlayerDeduped } = room.round.groupResult;
     const roundScores = computeScores(room, adjMap, perPlayerDeduped, groups);
+    room.lastRoundScores = roundScores;        // preserved for adjust-score refreshes
     room.phase = 'results';
 
     const leaderboard = buildLeaderboard(room, roundScores);
@@ -748,7 +788,7 @@ io.on('connection', (socket) => {
           ? buildSpectateInfo(room) : null,
         leaderboard: ['results', 'finished'].includes(room.phase)
           ? (room.phase === 'finished' && (room.eliminationOrder.length > 0 || room.gulagWaiting !== null)
-              ? buildGulagFinal(room) : buildLeaderboard(room, new Map()))
+              ? buildGulagFinal(room) : buildLeaderboard(room, room.lastRoundScores || new Map()))
           : null,
         roundNumber: room.roundNumber,
       });

@@ -101,12 +101,12 @@ let state = {
   phase: 'no-room',
   selectedCategory: '',
   adjState: {},
-  adjMode: 'round',         // 'round' | 'duel' — which scorer the adjudication panel feeds
+  adjMode: 'round',
   prevPlayerCount: 0,
-  gulagPending: null,       // { playerId, nickname } awaiting a decision
-  duelBoxes: {},            // playerId → chips container element
+  gulagPending: null,
+  duelBoxes: {},
   duelTickInterval: null,
-  roundTickInterval: null,  // host-side countdown for the live round panel
+  roundTickInterval: null,
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -240,7 +240,6 @@ function tryRejoinRoom() {
 
     switch (res.phase) {
       case 'round':
-        // Restore the live round panel (category + countdown) after a host reconnect
         if (res.roundInfo) {
           document.getElementById('round-live-category').textContent = res.roundInfo.category;
           startHostRoundCountdown(res.roundInfo.endsAt);
@@ -307,7 +306,6 @@ function renderPlayerList(players) {
   const badge = document.getElementById('player-count-badge');
   badge.textContent = `${players.length} / 20`;
 
-  // Play join sound when count increases
   if (players.length > state.prevPlayerCount) sfx.playerJoin();
   state.prevPlayerCount = players.length;
 
@@ -433,23 +431,50 @@ function renderAdjudicationPanel(groups, category, roundNumber) {
   document.getElementById('adj-category').textContent = category;
   document.getElementById('adj-round-num').textContent = roundNumber;
 
+  // Detect duplicate display labels: second+ occurrences auto-mark as invalid.
+  // Defensive — normally normalization prevents this, but if it leaks through
+  // (e.g. rare orthography), the host doesn't have to catch it manually.
+  const labelOccurrence = {};
+  const duplicateKeys = new Set();
+  groups.forEach(g => {
+    const seen = labelOccurrence[g.displayLabel] || 0;
+    if (seen >= 1) duplicateKeys.add(g.key);
+    labelOccurrence[g.displayLabel] = seen + 1;
+  });
+
   state.adjState = {};
-  groups.forEach(g => { state.adjState[g.key] = true; });
+  groups.forEach(g => { state.adjState[g.key] = !duplicateKeys.has(g.key); });
   updateAdjStats(groups);
 
   const list = document.getElementById('adj-list');
   list.innerHTML = '';
 
   groups.forEach((g, idx) => {
+    const isDup = duplicateKeys.has(g.key);
+    const initialValid = !isDup;
+    const nicks = g.playerNicks || [];
+
     const row = document.createElement('div');
-    row.className = 'adj-row lb-row-enter';
+    row.className = 'adj-row lb-row-enter' + (isDup ? ' rejected' : '');
     row.style.setProperty('--row-delay', `${idx * 40}ms`);
     row.dataset.key   = g.key;
     row.dataset.label = g.displayLabel;
+    row.dataset.search = `${g.displayLabel} ${nicks.join(' ')}`;
+
+    const nicksHtml = nicks.length
+      ? `<div class="adj-nicks">${nicks.map(n => `<span class="adj-nick">${escapeHtml(n)}</span>`).join('')}</div>`
+      : '';
+    const dupBadge = isDup ? `<span class="adj-dup-badge" title="ظهرت نفس الكلمة في صف آخر">مكرّر</span>` : '';
 
     row.innerHTML = `
-      <button class="adj-toggle valid" title="تبديل">✓</button>
-      <span class="adj-label">${escapeHtml(g.displayLabel)}</span>
+      <button class="adj-toggle ${initialValid ? 'valid' : 'invalid'}" title="تبديل">${initialValid ? '✓' : '✗'}</button>
+      <div class="adj-label-wrap">
+        <div class="adj-label-row">
+          <span class="adj-label">${escapeHtml(g.displayLabel)}</span>
+          ${dupBadge}
+        </div>
+        ${nicksHtml}
+      </div>
       <span class="adj-count">${g.playerCount} ${g.playerCount === 1 ? 'لاعب' : 'لاعبين'}</span>
     `;
 
@@ -462,7 +487,6 @@ function renderAdjudicationPanel(groups, category, roundNumber) {
       e.target.textContent = valid ? '✓' : '✗';
       row.classList.toggle('rejected', !valid);
 
-      // Shake on reject, brief pop on accept
       if (!valid) {
         row.classList.remove('shake');
         void row.offsetWidth;
@@ -482,7 +506,7 @@ function renderAdjudicationPanel(groups, category, roundNumber) {
   document.getElementById('adj-search').oninput = (e) => {
     const q = e.target.value.trim();
     document.querySelectorAll('.adj-row').forEach(row => {
-      row.classList.toggle('hidden', !!q && !row.dataset.label.includes(q));
+      row.classList.toggle('hidden', !!q && !row.dataset.search.includes(q));
     });
   };
 }
@@ -681,7 +705,6 @@ document.getElementById('btn-duel-continue').addEventListener('click', () => {
       resetRoundControls();
       showHostPhase('lobby');
     }
-    // finished → the room-wide game:finished event renders the final screen
   });
 });
 

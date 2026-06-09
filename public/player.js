@@ -16,7 +16,6 @@ function getCtx() {
   return audioCtx;
 }
 
-// Resume on first interaction (required by mobile browsers)
 document.addEventListener('pointerdown', () => getCtx(), { once: false, passive: true });
 
 function beep(freq, dur, type = 'sine', vol = 0.22) {
@@ -39,7 +38,6 @@ function seq(notes) {
   notes.forEach(n => setTimeout(() => beep(n.f, n.d, n.t || 'sine', n.v || 0.22), n.at || 0));
 }
 
-// Swooping tone (freq ramp)
 function sweep(f1, f2, dur, type = 'sawtooth', vol = 0.25) {
   if (muted) return;
   const ctx = getCtx();
@@ -58,14 +56,31 @@ function sweep(f1, f2, dur, type = 'sawtooth', vol = 0.25) {
 }
 
 const sfx = {
-  submit()    { beep(900, 0.10, 'sine', 0.18); },
-  tick()      { beep(560, 0.07, 'square', 0.10); },
-  urgentTick(){ beep(880, 0.07, 'square', 0.14); },
-  timeUp()    { sweep(480, 90, 0.75, 'sawtooth', 0.28); },
-  roundStart(){ seq([{f:400,d:0.09,at:0},{f:600,d:0.09,at:80},{f:900,d:0.15,at:160}]); },
-  goodScore() { seq([{f:523,d:0.12,at:0},{f:659,d:0.12,at:110},{f:784,d:0.22,at:220}]); },
-  badScore()  { sweep(250, 120, 0.35, 'square', 0.18); },
-  fanfare()   {
+  submit()      { beep(900, 0.08, 'sine', 0.16); },
+  tick()        { beep(560, 0.07, 'square', 0.10); },
+  urgentTick()  { beep(880, 0.07, 'square', 0.14); },
+  timeUp()      { sweep(480, 90, 0.75, 'sawtooth', 0.28); },
+  roundStart()  { seq([{f:400,d:0.09,at:0},{f:600,d:0.09,at:80},{f:900,d:0.15,at:160}]); },
+  goodScore()   { seq([{f:523,d:0.12,at:0},{f:659,d:0.12,at:110},{f:784,d:0.22,at:220}]); },
+  badScore()    { sweep(250, 120, 0.35, 'square', 0.18); },
+  gulagEnter()  {
+    // Descending ominous tones — distinct from round sounds
+    seq([{f:300,d:0.18,at:0},{f:220,d:0.18,at:200},{f:150,d:0.35,at:420}]);
+  },
+  duelStart()   {
+    seq([
+      {f:200,d:0.10,at:0},{f:250,d:0.10,at:100},
+      {f:300,d:0.10,at:200},{f:450,d:0.25,at:320},
+    ]);
+  },
+  duelWin()     {
+    seq([
+      {f:523,d:0.12,at:0},{f:659,d:0.12,at:110},
+      {f:784,d:0.18,at:220},{f:1047,d:0.35,at:380},
+    ]);
+  },
+  duelLose()    { sweep(300, 80, 0.6, 'sawtooth', 0.22); },
+  fanfare()     {
     seq([
       {f:523,d:0.13,at:0},   {f:523,d:0.13,at:140},
       {f:523,d:0.13,at:280}, {f:698,d:0.35,at:420},
@@ -98,13 +113,13 @@ let state = {
   roomCode: localStorage.getItem('roomCode'),
   nickname: localStorage.getItem('nickname'),
   phase: 'lobby',
-  status: 'active',          // 'active' | 'gulag' | 'out'
+  status: 'active',
   roundEndsAt: null,
   tickInterval: null,
   myAnswers: [],
   lastTickSec: -1,
-  specTickInterval: null,    // countdown timer for the spectator view
-  specBoxes: {},             // playerId → chips container element
+  specTickInterval: null,
+  specBoxes: {},
 };
 
 // ─── Screen / state helpers ───────────────────────────────────────────────────
@@ -121,7 +136,6 @@ function showGameState(name) {
   );
 }
 
-// Idle screen for a non-active player (between rounds), based on their status
 function showSpectatorIdle() {
   showGameState(state.status === 'gulag' ? 'gulagWait' : 'spectateIdle');
 }
@@ -155,7 +169,7 @@ function attemptJoin(code, nickname, playerId) {
     state.playerId = res.playerId;
     state.roomCode = code.toUpperCase();
     state.nickname = res.nickname;
-    state.status = res.status || 'active';
+    state.status   = res.status || 'active';
     localStorage.setItem('playerId', res.playerId);
     localStorage.setItem('roomCode', state.roomCode);
     localStorage.setItem('nickname', res.nickname);
@@ -203,31 +217,36 @@ function attemptJoin(code, nickname, playerId) {
 
 document.getElementById('btn-join').addEventListener('click', doJoin);
 document.getElementById('input-nickname').addEventListener('keydown', e => { if (e.key === 'Enter') doJoin(); });
-document.getElementById('input-room-code').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('input-nickname').focus(); });
-document.getElementById('input-room-code').addEventListener('input', e => { e.target.value = e.target.value.toUpperCase(); });
+document.getElementById('input-room-code').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('input-nickname').focus();
+});
+document.getElementById('input-room-code').addEventListener('input', e => {
+  e.target.value = e.target.value.toUpperCase();
+});
 
 function doJoin() {
-  const code = document.getElementById('input-room-code').value.trim().toUpperCase();
+  const code     = document.getElementById('input-room-code').value.trim().toUpperCase();
   const nickname = document.getElementById('input-nickname').value.trim();
   showJoinError('');
   if (!code || code.length !== 4) { showJoinError('أدخل كود الغرفة (4 أحرف)'); return; }
-  if (!nickname) { showJoinError('أدخل اسمك'); return; }
+  if (!nickname)                  { showJoinError('أدخل اسمك'); return; }
   document.getElementById('btn-join').disabled = true;
-  getCtx(); // unlock audio on first interaction
+  getCtx();
   attemptJoin(code, nickname, null);
 }
 
 // ─── Round: enter ─────────────────────────────────────────────────────────────
 
 function enterRound(category, endsAt, existingAnswers) {
-  state.phase = 'round';
+  state.phase     = 'round';
   state.roundEndsAt = endsAt;
   state.myAnswers = [...existingAnswers];
   state.lastTickSec = -1;
 
   document.getElementById('category-display').textContent = category;
-  document.getElementById('answer-input').value = '';
-  document.getElementById('answer-input').disabled = false;
+  const input = document.getElementById('answer-input');
+  input.value = '';
+  input.disabled = false;
   document.getElementById('btn-submit-answer').disabled = false;
 
   const area = document.getElementById('chips-area');
@@ -236,16 +255,15 @@ function enterRound(category, endsAt, existingAnswers) {
 
   showGameState('round');
 
-  // Flash the round card green briefly
   const roundCard = document.querySelector('#state-round .card');
   if (roundCard) {
     roundCard.classList.remove('round-start-flash');
-    void roundCard.offsetWidth; // reflow to restart animation
+    void roundCard.offsetWidth;
     roundCard.classList.add('round-start-flash');
   }
 
   startCountdown(endsAt);
-  document.getElementById('answer-input').focus();
+  input.focus();
 }
 
 // ─── Countdown ────────────────────────────────────────────────────────────────
@@ -260,7 +278,6 @@ function startCountdown(endsAt) {
     const urgent = rem <= 10 && rem > 0;
     el.classList.toggle('urgent', urgent || rem === 0);
 
-    // Play a tick sound once per second during last 10s
     if (urgent && rem !== state.lastTickSec) {
       state.lastTickSec = rem;
       rem <= 5 ? sfx.urgentTick() : sfx.tick();
@@ -274,15 +291,21 @@ function startCountdown(endsAt) {
 // ─── Answer submission ────────────────────────────────────────────────────────
 
 document.getElementById('btn-submit-answer').addEventListener('click', submitAnswer);
-document.getElementById('answer-input').addEventListener('keydown', e => { if (e.key === 'Enter') submitAnswer(); });
+document.getElementById('answer-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') submitAnswer();
+});
 
 function submitAnswer() {
-  const input = document.getElementById('answer-input');
+  const input  = document.getElementById('answer-input');
   const answer = input.value.trim();
   if (!answer || state.phase !== 'round') return;
+
+  // Optimistic: briefly disable to prevent double-submit, re-enable on server echo
+  document.getElementById('btn-submit-answer').disabled = true;
   socket.emit('player:submit_answer', { code: state.roomCode, answer });
   input.value = '';
   input.focus();
+  setTimeout(() => { document.getElementById('btn-submit-answer').disabled = false; }, 200);
 }
 
 socket.on('player:answer_received', ({ answer }) => {
@@ -308,7 +331,7 @@ function addChip(text, animate = true) {
 // ─── Round events ─────────────────────────────────────────────────────────────
 
 socket.on('round:started', ({ category, endsAt }) => {
-  if (state.status !== 'active') return;   // spectators get spectate:round_start instead
+  if (state.status !== 'active') return;
   state.myAnswers = [];
   sfx.roundStart();
   enterRound(category, endsAt, []);
@@ -349,40 +372,60 @@ socket.on('round:reset', () => {
 socket.on('gulag:entered', () => {
   state.status = 'gulag';
   clearInterval(state.tickInterval);
-  sfx.badScore();
-  showGameState('gulagWait');   // a duel:started, if any, overrides immediately
+  sfx.gulagEnter();           // ominous drop instead of generic bad score
+  showGameState('gulagWait');
 });
 
 function enterDuel(category, endsAt, opponent, existingAnswers) {
-  state.phase = 'duel';
+  state.phase     = 'duel';
   state.roundEndsAt = endsAt;
   state.lastTickSec = -1;
-  document.getElementById('duel-opponent').textContent = opponent || '—';
-  document.getElementById('duel-category').textContent = category;
+
+  document.getElementById('duel-opponent').textContent  = opponent || '—';
+  document.getElementById('duel-category').textContent  = category;
+
   const input = document.getElementById('duel-input');
-  input.value = ''; input.disabled = false;
+  input.value = '';
+  input.disabled = false;
   document.getElementById('btn-duel-submit').disabled = false;
+
   const chips = document.getElementById('duel-chips');
   chips.innerHTML = '';
   (existingAnswers || []).forEach(a => prependChip(chips, a, false));
+
   showGameState('duel');
   startDuelCountdown(endsAt);
+
+  // Flash the duel card on entry
+  const duelCard = document.querySelector('#state-duel .duel-card');
+  if (duelCard) {
+    duelCard.classList.remove('round-start-flash');
+    void duelCard.offsetWidth;
+    duelCard.classList.add('round-start-flash');
+  }
+
   input.focus();
 }
 
 socket.on('duel:started', ({ category, endsAt, opponent }) => {
   state.status = 'gulag';
-  sfx.roundStart();
+  sfx.duelStart();
   enterDuel(category, endsAt, opponent, []);
 });
 
 function startDuelCountdown(endsAt) {
   clearInterval(state.tickInterval);
+  state.lastTickSec = -1;
   const el = document.getElementById('duel-countdown');
   function tick() {
     const rem = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
     el.textContent = rem;
     el.classList.toggle('urgent', rem <= 10);
+    // Ticks during duel too — tension matters
+    if (rem <= 10 && rem > 0 && rem !== state.lastTickSec) {
+      state.lastTickSec = rem;
+      rem <= 5 ? sfx.urgentTick() : sfx.tick();
+    }
     if (rem <= 0) clearInterval(state.tickInterval);
   }
   tick();
@@ -390,19 +433,23 @@ function startDuelCountdown(endsAt) {
 }
 
 document.getElementById('btn-duel-submit').addEventListener('click', submitDuelAnswer);
-document.getElementById('duel-input').addEventListener('keydown', e => { if (e.key === 'Enter') submitDuelAnswer(); });
+document.getElementById('duel-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') submitDuelAnswer();
+});
 
 function submitDuelAnswer() {
-  const input = document.getElementById('duel-input');
+  const input  = document.getElementById('duel-input');
   const answer = input.value.trim();
   if (!answer || state.phase !== 'duel') return;
+  document.getElementById('btn-duel-submit').disabled = true;
   socket.emit('player:submit_answer', { code: state.roomCode, answer });
   input.value = '';
   input.focus();
+  setTimeout(() => { document.getElementById('btn-duel-submit').disabled = false; }, 200);
 }
 
 socket.on('duel:tick', ({ remaining }) => {
-  const id = state.phase === 'duel' ? 'duel-countdown'
+  const id = state.phase === 'duel'     ? 'duel-countdown'
            : state.phase === 'spectate' ? 'spectate-countdown' : null;
   if (!id) return;
   const el = document.getElementById(id);
@@ -427,18 +474,20 @@ socket.on('duel:result', ({ winnerId, loserId, winnerNick, loserNick }) => {
     state.status = 'active';
     document.getElementById('duel-result-emoji').textContent = '🎉';
     const msg = document.getElementById('duel-result-msg');
-    msg.textContent = 'نجوت!'; msg.style.color = 'var(--success)';
+    msg.textContent = 'نجوت!';
+    msg.style.color = 'var(--success)';
     document.getElementById('duel-result-sub').textContent = 'ترجع للمنافسة — استعدّ للجولة القادمة.';
     showGameState('duelResult');
-    sfx.goodScore();
+    sfx.duelWin();
   } else if (loserId === state.playerId) {
     state.status = 'out';
     document.getElementById('duel-result-emoji').textContent = '💀';
     const msg = document.getElementById('duel-result-msg');
-    msg.textContent = 'خرجت من اللعبة'; msg.style.color = 'var(--danger)';
+    msg.textContent = 'خرجت من اللعبة';
+    msg.style.color = 'var(--danger)';
     document.getElementById('duel-result-sub').textContent = 'بتتفرّج على الباقين لين تنتهي اللعبة 👀';
     showGameState('duelResult');
-    sfx.badScore();
+    sfx.duelLose();
   } else {
     const banner = document.getElementById('spectate-banner');
     if (banner) banner.textContent = `⚔️ ${winnerNick} فاز على ${loserNick}`;
@@ -472,7 +521,10 @@ function buildSpectateGrid(players) {
   players.forEach(p => {
     const box = document.createElement('div');
     box.className = 'spec-box';
-    box.innerHTML = `<div class="spec-box-name">${escapeHtml(p.nickname)}</div><div class="spec-chips"></div>`;
+    box.innerHTML = `
+      <div class="spec-box-name">${escapeHtml(p.nickname)}</div>
+      <div class="spec-chips"></div>
+    `;
     grid.appendChild(box);
     state.specBoxes[p.playerId] = box.querySelector('.spec-chips');
   });
@@ -524,11 +576,10 @@ socket.on('round:results', ({ leaderboard, roundNumber }) => {
   renderLeaderboard(leaderboard, roundNumber);
   showGameState('results');
 
-  // Play score sound based on own delta
   const mine = leaderboard.find(e => e.playerId === state.playerId);
   if (mine) {
     setTimeout(() => {
-      if (mine.roundScore > 0) sfx.goodScore();
+      if (mine.roundScore > 0)      sfx.goodScore();
       else if (mine.roundScore < 0) sfx.badScore();
     }, 500);
   }
@@ -540,18 +591,19 @@ function renderLeaderboard(leaderboard, roundNumber) {
   tbody.innerHTML = '';
 
   leaderboard.forEach((entry, idx) => {
-    const tr = document.createElement('tr');
+    const tr  = document.createElement('tr');
     const isMe = entry.playerId === state.playerId;
-    if (isMe)       tr.className = 'my-row lb-row-enter';
+    if (isMe)        tr.className = 'my-row lb-row-enter';
     else if (idx===0) tr.className = 'rank-1-row lb-row-enter';
     else              tr.className = 'lb-row-enter';
     tr.style.setProperty('--row-delay', `${idx * 70}ms`);
 
-    const sign = entry.roundScore > 0 ? '+' : '';
-    const cls  = entry.roundScore > 0 ? 'delta-pos' : entry.roundScore < 0 ? 'delta-neg' : 'delta-zero';
+    const sign  = entry.roundScore > 0 ? '+' : '';
+    const cls   = entry.roundScore > 0 ? 'delta-pos' : entry.roundScore < 0 ? 'delta-neg' : 'delta-zero';
+    const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '';
     tr.innerHTML = `
-      <td class="rank-cell">${entry.rank}</td>
-      <td class="name-cell">${escapeHtml(entry.nickname)}${isMe ? ' <span style="color:var(--accent);font-size:0.75rem;">(أنت)</span>' : ''}</td>
+      <td class="rank-cell">${medal || entry.rank}</td>
+      <td class="name-cell">${escapeHtml(entry.nickname)}${isMe ? ' <span class="you-badge">(أنت)</span>' : ''}</td>
       <td class="delta-cell ${cls} delta-pop" style="animation-delay:${idx*70+300}ms">${sign}${entry.roundScore}</td>
       <td class="score-cell">${entry.totalScore}</td>
     `;
@@ -575,16 +627,17 @@ function renderFinal(leaderboard) {
   tbody.innerHTML = '';
   leaderboard.forEach((entry, idx) => {
     const isMe = entry.playerId === state.playerId;
-    const tr = document.createElement('tr');
+    const tr   = document.createElement('tr');
     tr.className = [
       isMe ? 'my-row' : '',
       idx === 0 ? 'rank-1-row' : '',
       'lb-row-enter',
     ].filter(Boolean).join(' ');
     tr.style.setProperty('--row-delay', `${idx * 60}ms`);
+    const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '';
     tr.innerHTML = `
-      <td class="rank-cell">${entry.rank}</td>
-      <td class="name-cell">${escapeHtml(entry.nickname)}${isMe ? ' <span style="color:var(--accent);font-size:0.75rem;">(أنت)</span>' : ''}</td>
+      <td class="rank-cell">${medal || entry.rank}</td>
+      <td class="name-cell">${escapeHtml(entry.nickname)}${isMe ? ' <span class="you-badge">(أنت)</span>' : ''}</td>
       <td class="score-cell">${entry.totalScore}</td>
     `;
     tbody.appendChild(tr);
@@ -596,12 +649,12 @@ function renderFinal(leaderboard) {
 function renderPodium(containerId, leaderboard) {
   const wrap = document.getElementById(containerId);
   wrap.innerHTML = '';
-  const top3 = leaderboard.slice(0, 3);
+  const top3  = leaderboard.slice(0, 3);
   if (!top3.length) return;
   const slots   = [top3[1], top3[0], top3[2]];
-  const classes  = ['second','first','third'];
-  const medals   = ['🥈','🥇','🥉'];
-  const labels   = ['2','1','3'];
+  const classes = ['second','first','third'];
+  const medals  = ['🥈','🥇','🥉'];
+  const labels  = ['2','1','3'];
   slots.forEach((entry, i) => {
     if (!entry) return;
     const div = document.createElement('div');
@@ -648,14 +701,19 @@ function launchConfetti() {
   for (let i = 0; i < 90; i++) {
     const el   = document.createElement('div');
     const size = Math.random() * 10 + 5;
+    const isRect = Math.random() > 0.5;
     el.style.cssText = [
-      `position:fixed`,`width:${size}px`,`height:${size}px`,
-      `background:${colors[Math.floor(Math.random()*colors.length)]}`,
-      `left:${Math.random()*100}vw`,`top:-12px`,
-      `border-radius:${Math.random()>0.5?'50%':'2px'}`,
-      `z-index:9999`,`pointer-events:none`,
-      `animation:confetti-fall ${Math.random()*2+2.5}s linear forwards`,
-      `animation-delay:${Math.random()*1.5}s`,
+      `position:fixed`,
+      `width:${isRect ? size * 1.6 : size}px`,
+      `height:${size}px`,
+      `background:${colors[Math.floor(Math.random() * colors.length)]}`,
+      `left:${Math.random() * 100}vw`,
+      `top:-12px`,
+      `border-radius:${isRect ? '2px' : '50%'}`,
+      `z-index:9999`,
+      `pointer-events:none`,
+      `animation:confetti-fall ${Math.random() * 2 + 2.5}s linear forwards`,
+      `animation-delay:${Math.random() * 1.5}s`,
     ].join(';');
     document.body.appendChild(el);
     setTimeout(() => el.remove(), 5500);

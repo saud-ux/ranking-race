@@ -56,7 +56,10 @@
           <div id="room-code-display" class="room-code-display">—</div>
         </div>
         <div class="qr-wrap">
-          <img id="qr-img" class="qr-img" alt="QR" src="">
+          <div id="qr-container" style="width:180px;height:180px;display:flex;align-items:center;justify-content:center;">
+            <canvas id="qr-canvas"></canvas>
+            <img id="qr-img" class="qr-img" alt="QR" src="" style="display:none;">
+          </div>
           <div id="qr-url" class="qr-url"></div>
         </div>
       </div>
@@ -71,7 +74,7 @@
             <span id="player-count-badge" class="player-count-badge">0 / 20</span>
           </div>
           <div id="player-list" class="player-list">
-            <p class="text-muted" style="font-size:0.9rem;">لم ينضم أحد بعد…</p>
+            <p class="text-muted" style="font-size:0.9rem;text-align:center;padding:12px 0;">لم ينضم أحد بعد…</p>
           </div>
         </div>
 
@@ -97,7 +100,18 @@
 
       </div>
 
-      <!-- Adjudication panel (adjudication phase, full-width) -->
+      <!-- Live round panel -->
+      <div id="panel-round-live" class="card round-live-panel hidden">
+        <div class="round-live-head">
+          <div>
+            <div class="section-title" style="margin:0;">جولة جارية ⏱️</div>
+            <div id="round-live-category" class="round-live-category">—</div>
+          </div>
+          <div id="round-live-countdown" class="duel-countdown-badge">30</div>
+        </div>
+      </div>
+
+      <!-- Adjudication panel -->
       <div id="panel-adjudication" class="card adj-panel hidden">
         <div class="adj-header">
           <div>
@@ -117,7 +131,7 @@
         </p>
       </div>
 
-      <!-- Leaderboard panel (results phase, full-width) -->
+      <!-- Leaderboard panel -->
       <div id="panel-leaderboard" class="card lb-panel hidden">
         <div class="lb-header">
           <div class="section-title" style="margin:0;">
@@ -141,7 +155,7 @@
         </table>
       </div>
 
-      <!-- Duel live panel (duel phase) -->
+      <!-- Duel live panel -->
       <div id="panel-duel" class="card duel-panel hidden">
         <div class="duel-panel-head">
           <div class="section-title" style="margin:0;">
@@ -152,7 +166,7 @@
         <div id="host-duel-boxes" class="duel-boxes"></div>
       </div>
 
-      <!-- Duel result panel (duel_result phase) -->
+      <!-- Duel result panel -->
       <div id="panel-duel-result" class="card hidden" style="text-align:center;">
         <div class="duel-result-emoji">⚔️</div>
         <div id="duel-result-banner" class="duel-result-banner"></div>
@@ -160,15 +174,12 @@
         <button id="btn-duel-continue" class="btn btn-primary" style="margin-top:20px;padding:12px 36px;">متابعة</button>
       </div>
 
-      <!-- Final panel (finished phase, full-width) -->
+      <!-- Final panel -->
       <div id="panel-final" class="card final-panel hidden">
         <div class="final-title">🎉 انتهت اللعبة!</div>
         <p class="final-subtitle">النتائج النهائية</p>
-
         <div id="host-podium" class="podium-wrap"></div>
-
         <div class="divider"></div>
-
         <table class="leaderboard-table mt-16">
           <thead>
             <tr>
@@ -179,7 +190,6 @@
           </thead>
           <tbody id="final-tbody"></tbody>
         </table>
-
         <div style="margin-top:24px;">
           <button id="btn-new-game" class="btn btn-primary" style="padding:14px 32px;">
             إنشاء غرفة جديدة
@@ -205,7 +215,20 @@
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+  <!-- QR: try primary CDN, fallback to secondary -->
+  <script>
+    window.QRCode = undefined;
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"
+          onerror="loadQRFallback()"></script>
+  <script>
+    function loadQRFallback() {
+      var s = document.createElement('script');
+      s.src = 'https://unpkg.com/qrcode@1.5.3/build/qrcode.min.js';
+      s.onerror = function() { console.warn('QR library failed to load from both CDNs'); };
+      document.head.appendChild(s);
+    }
+  </script>
   <script src="/host.js"></script>
 </body>
 </html>

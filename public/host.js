@@ -342,11 +342,60 @@ function setupRoomView(code) {
   document.getElementById('room-code-display').textContent = code;
   const joinUrl = `${window.location.origin}/?room=${code}`;
   document.getElementById('qr-url').textContent = joinUrl;
-  if (typeof QRCode !== 'undefined') {
-    QRCode.toDataURL(joinUrl, { width: 200, margin: 1, color: { dark: '#f59e0b', light: '#1a1a35' } }, (err, url) => {
-      if (!err) document.getElementById('qr-img').src = url;
+  generateQR(joinUrl);
+}
+
+function generateQR(url) {
+  // Try canvas method first (most reliable)
+  const canvas = document.getElementById('qr-canvas');
+  const img    = document.getElementById('qr-img');
+
+  function tryGenerate() {
+    if (typeof QRCode === 'undefined') {
+      console.warn('QRCode not loaded yet, retrying…');
+      setTimeout(tryGenerate, 300);
+      return;
+    }
+    // toCanvas is the most reliable method
+    if (canvas && QRCode.toCanvas) {
+      QRCode.toCanvas(canvas, url, {
+        width: 180,
+        margin: 1,
+        color: { dark: '#f59e0b', light: '#1a1a35' },
+      }, (err) => {
+        if (err) {
+          console.error('QR canvas error:', err);
+          tryDataURL(url);
+        } else {
+          canvas.style.display = 'block';
+          if (img) img.style.display = 'none';
+          // Style the canvas border
+          canvas.style.border = '4px solid #f59e0b';
+          canvas.style.borderRadius = '8px';
+        }
+      });
+    } else {
+      tryDataURL(url);
+    }
+  }
+
+  function tryDataURL(u) {
+    if (!QRCode.toDataURL) return;
+    QRCode.toDataURL(u, {
+      width: 180,
+      margin: 1,
+      color: { dark: '#f59e0b', light: '#1a1a35' },
+    }, (err, dataUrl) => {
+      if (err) { console.error('QR dataURL error:', err); return; }
+      if (img) {
+        img.src = dataUrl;
+        img.style.display = 'block';
+        if (canvas) canvas.style.display = 'none';
+      }
     });
   }
+
+  tryGenerate();
 }
 
 // ─── Player list (with +/- score adjustment) ──────────────────────────────────

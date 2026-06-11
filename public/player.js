@@ -1,8 +1,6 @@
 'use strict';
 
-const socket = io();
-
-// ─── Audio engine (Web Audio API, no files) ───────────────────────────────────
+// ─── Audio engine ─────────────────────────────────────────────────────────────
 
 let audioCtx = null;
 let muted = localStorage.getItem('muted') === '1';
@@ -63,10 +61,7 @@ const sfx = {
   roundStart()  { seq([{f:400,d:0.09,at:0},{f:600,d:0.09,at:80},{f:900,d:0.15,at:160}]); },
   goodScore()   { seq([{f:523,d:0.12,at:0},{f:659,d:0.12,at:110},{f:784,d:0.22,at:220}]); },
   badScore()    { sweep(250, 120, 0.35, 'square', 0.18); },
-  gulagEnter()  {
-    // Descending ominous tones — distinct from round sounds
-    seq([{f:300,d:0.18,at:0},{f:220,d:0.18,at:200},{f:150,d:0.35,at:420}]);
-  },
+  gulagEnter()  { seq([{f:300,d:0.18,at:0},{f:220,d:0.18,at:200},{f:150,d:0.35,at:420}]); },
   duelStart()   {
     seq([
       {f:200,d:0.10,at:0},{f:250,d:0.10,at:100},
@@ -108,7 +103,7 @@ document.getElementById('mute-btn')?.addEventListener('click', () => {
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
-let state = {
+let pState = {
   playerId: localStorage.getItem('playerId'),
   roomCode: localStorage.getItem('roomCode'),
   nickname: localStorage.getItem('nickname'),
@@ -122,37 +117,96 @@ let state = {
   specBoxes: {},
 };
 
-// ─── Screen / state helpers ───────────────────────────────────────────────────
+// ─── Screen helpers ───────────────────────────────────────────────────────────
 
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  document.getElementById(`screen-${id}`).classList.add('active');
+  const el = document.getElementById(`screen-${id}`);
+  if (el) el.classList.add('active');
 }
 
 function showGameState(name) {
   ['waiting','round','ended','results','final',
    'gulagWait','spectateIdle','duel','duelResult','spectate'].forEach(n =>
-    document.getElementById(`state-${n}`).classList.toggle('hidden', n !== name)
+    document.getElementById(`state-${n}`)?.classList.toggle('hidden', n !== name)
   );
 }
 
 function showSpectatorIdle() {
-  showGameState(state.status === 'gulag' ? 'gulagWait' : 'spectateIdle');
+  showGameState(pState.status === 'gulag' ? 'gulagWait' : 'spectateIdle');
 }
 
 function setConnectionStatus(status) {
-  document.getElementById('status-dot').className = `status-dot ${status}`;
-  document.getElementById('conn-label').textContent =
+  const dot = document.getElementById('status-dot');
+  const lbl = document.getElementById('conn-label');
+  if (!dot) return;
+  dot.className = `status-dot ${status}`;
+  lbl.textContent =
     status === 'connected'    ? 'متصل' :
     status === 'reconnecting' ? 'إعادة الاتصال…' : 'منقطع';
 }
 
-function showJoinError(msg) { document.getElementById('join-error').textContent = msg; }
+function showJoinError(msg) {
+  const el = document.getElementById('join-error');
+  if (el) el.textContent = msg;
+}
 
 function clearPlayerStorage() {
   ['playerId','roomCode','nickname'].forEach(k => localStorage.removeItem(k));
-  state.playerId = state.roomCode = state.nickname = null;
+  pState.playerId = pState.roomCode = pState.nickname = null;
 }
+
+// ─── Navigation helpers ───────────────────────────────────────────────────────
+
+function playerGoToMenu() {
+  clearPlayerStorage();
+  clearInterval(pState.tickInterval);
+  clearInterval(pState.specTickInterval);
+  hideLeavModal();
+  showScreen('menu');
+}
+
+function showLeaveModal() {
+  document.getElementById('leave-modal')?.classList.remove('hidden');
+}
+
+function hideLeavModal() {
+  document.getElementById('leave-modal')?.classList.add('hidden');
+}
+
+// ─── Leave button (in-game top bar) ──────────────────────────────────────────
+
+document.getElementById('player-leave-btn')?.addEventListener('click', showLeaveModal);
+document.getElementById('leave-cancel-btn')?.addEventListener('click', hideLeavModal);
+document.getElementById('leave-confirm-btn')?.addEventListener('click', () => {
+  // Tell server to remove us (reuse kick mechanism via a leave event — handled below)
+  if (pState.playerId && pState.roomCode) {
+    socket.emit('player:leave', { code: pState.roomCode, playerId: pState.playerId });
+  }
+  playerGoToMenu();
+});
+
+// Final screen menu button
+document.getElementById('player-final-menu-btn')?.addEventListener('click', playerGoToMenu);
+
+// ─── Join form: back button ───────────────────────────────────────────────────
+
+document.getElementById('join-back-btn')?.addEventListener('click', () => {
+  showJoinError('');
+  showScreen('menu');
+});
+
+// ─── Main menu → player flow ──────────────────────────────────────────────────
+
+document.getElementById('menu-btn-join')?.addEventListener('click', () => {
+  getCtx();
+  showScreen('join');
+  // Pre-fill room code from URL if present
+  const params = new URLSearchParams(window.location.search);
+  const roomFromUrl = params.get('room');
+  if (roomFromUrl) document.getElementById('input-room-code').value = roomFromUrl.toUpperCase();
+  setTimeout(() => document.getElementById('input-room-code').focus(), 50);
+});
 
 // ─── Join / reconnect ─────────────────────────────────────────────────────────
 
@@ -162,19 +216,21 @@ function attemptJoin(code, nickname, playerId) {
       if (res.error === 'تمت إزالتك من الغرفة') clearPlayerStorage();
       showJoinError(res.error);
       showScreen('join');
-      document.getElementById('btn-join').disabled = false;
+      const btn = document.getElementById('btn-join');
+      if (btn) btn.disabled = false;
       return;
     }
 
-    state.playerId = res.playerId;
-    state.roomCode = code.toUpperCase();
-    state.nickname = res.nickname;
-    state.status   = res.status || 'active';
+    pState.playerId = res.playerId;
+    pState.roomCode = code.toUpperCase();
+    pState.nickname = res.nickname;
+    pState.status   = res.status || 'active';
     localStorage.setItem('playerId', res.playerId);
-    localStorage.setItem('roomCode', state.roomCode);
+    localStorage.setItem('roomCode', pState.roomCode);
     localStorage.setItem('nickname', res.nickname);
 
-    document.getElementById('display-nickname').textContent = res.nickname;
+    const nickEl = document.getElementById('display-nickname');
+    if (nickEl) nickEl.textContent = res.nickname;
     showScreen('lobby');
 
     if (res.duelInfo) {
@@ -186,7 +242,7 @@ function attemptJoin(code, nickname, playerId) {
     } else if (res.phase === 'finished' && res.leaderboard) {
       renderFinal(res.leaderboard);
       showGameState('final');
-    } else if (state.status !== 'active') {
+    } else if (pState.status !== 'active') {
       showSpectatorIdle();
     } else if (res.phase === 'adjudication') {
       showGameState('ended');
@@ -204,23 +260,33 @@ function attemptJoin(code, nickname, playerId) {
 (function init() {
   const params = new URLSearchParams(window.location.search);
   const roomFromUrl = params.get('room');
-  if (roomFromUrl) document.getElementById('input-room-code').value = roomFromUrl.toUpperCase();
 
-  if (state.playerId && state.roomCode) {
-    attemptJoin(state.roomCode, state.nickname, state.playerId);
-  } else {
+  // If URL has a room code, go straight to join form
+  if (roomFromUrl) {
+    document.getElementById('input-room-code').value = roomFromUrl.toUpperCase();
     showScreen('join');
+    setTimeout(() => document.getElementById('input-nickname')?.focus(), 50);
+    return;
   }
+
+  // If stored session, try to reconnect
+  if (pState.playerId && pState.roomCode) {
+    attemptJoin(pState.roomCode, pState.nickname, pState.playerId);
+    return;
+  }
+
+  // Otherwise show main menu (host.js may override this if hostKey is set)
+  showScreen('menu');
 })();
 
 // ─── Join form ────────────────────────────────────────────────────────────────
 
-document.getElementById('btn-join').addEventListener('click', doJoin);
-document.getElementById('input-nickname').addEventListener('keydown', e => { if (e.key === 'Enter') doJoin(); });
-document.getElementById('input-room-code').addEventListener('keydown', e => {
+document.getElementById('btn-join')?.addEventListener('click', doJoin);
+document.getElementById('input-nickname')?.addEventListener('keydown', e => { if (e.key === 'Enter') doJoin(); });
+document.getElementById('input-room-code')?.addEventListener('keydown', e => {
   if (e.key === 'Enter') document.getElementById('input-nickname').focus();
 });
-document.getElementById('input-room-code').addEventListener('input', e => {
+document.getElementById('input-room-code')?.addEventListener('input', e => {
   e.target.value = e.target.value.toUpperCase();
 });
 
@@ -230,7 +296,8 @@ function doJoin() {
   showJoinError('');
   if (!code || code.length !== 4) { showJoinError('أدخل كود الغرفة (4 أحرف)'); return; }
   if (!nickname)                  { showJoinError('أدخل اسمك'); return; }
-  document.getElementById('btn-join').disabled = true;
+  const btn = document.getElementById('btn-join');
+  if (btn) btn.disabled = true;
   getCtx();
   attemptJoin(code, nickname, null);
 }
@@ -238,10 +305,10 @@ function doJoin() {
 // ─── Round: enter ─────────────────────────────────────────────────────────────
 
 function enterRound(category, endsAt, existingAnswers) {
-  state.phase     = 'round';
-  state.roundEndsAt = endsAt;
-  state.myAnswers = [...existingAnswers];
-  state.lastTickSec = -1;
+  pState.phase      = 'round';
+  pState.roundEndsAt = endsAt;
+  pState.myAnswers  = [...existingAnswers];
+  pState.lastTickSec = -1;
 
   document.getElementById('category-display').textContent = category;
   const input = document.getElementById('answer-input');
@@ -251,7 +318,7 @@ function enterRound(category, endsAt, existingAnswers) {
 
   const area = document.getElementById('chips-area');
   area.innerHTML = '';
-  state.myAnswers.forEach(a => addChip(a, false));
+  pState.myAnswers.forEach(a => addChip(a, false));
 
   showGameState('round');
 
@@ -269,7 +336,7 @@ function enterRound(category, endsAt, existingAnswers) {
 // ─── Countdown ────────────────────────────────────────────────────────────────
 
 function startCountdown(endsAt) {
-  clearInterval(state.tickInterval);
+  clearInterval(pState.tickInterval);
   const el = document.getElementById('countdown');
 
   function tick() {
@@ -277,39 +344,36 @@ function startCountdown(endsAt) {
     el.textContent = rem;
     const urgent = rem <= 10 && rem > 0;
     el.classList.toggle('urgent', urgent || rem === 0);
-
-    if (urgent && rem !== state.lastTickSec) {
-      state.lastTickSec = rem;
+    if (urgent && rem !== pState.lastTickSec) {
+      pState.lastTickSec = rem;
       rem <= 5 ? sfx.urgentTick() : sfx.tick();
     }
-    if (rem <= 0) clearInterval(state.tickInterval);
+    if (rem <= 0) clearInterval(pState.tickInterval);
   }
   tick();
-  state.tickInterval = setInterval(tick, 250);
+  pState.tickInterval = setInterval(tick, 250);
 }
 
 // ─── Answer submission ────────────────────────────────────────────────────────
 
-document.getElementById('btn-submit-answer').addEventListener('click', submitAnswer);
-document.getElementById('answer-input').addEventListener('keydown', e => {
+document.getElementById('btn-submit-answer')?.addEventListener('click', submitAnswer);
+document.getElementById('answer-input')?.addEventListener('keydown', e => {
   if (e.key === 'Enter') submitAnswer();
 });
 
 function submitAnswer() {
   const input  = document.getElementById('answer-input');
   const answer = input.value.trim();
-  if (!answer || state.phase !== 'round') return;
-
-  // Optimistic: briefly disable to prevent double-submit, re-enable on server echo
+  if (!answer || pState.phase !== 'round') return;
   document.getElementById('btn-submit-answer').disabled = true;
-  socket.emit('player:submit_answer', { code: state.roomCode, answer });
+  socket.emit('player:submit_answer', { code: pState.roomCode, answer });
   input.value = '';
   input.focus();
   setTimeout(() => { document.getElementById('btn-submit-answer').disabled = false; }, 200);
 }
 
 socket.on('player:answer_received', ({ answer }) => {
-  const area = state.phase === 'duel'
+  const area = pState.phase === 'duel'
     ? document.getElementById('duel-chips')
     : document.getElementById('chips-area');
   prependChip(area, answer, true);
@@ -331,28 +395,28 @@ function addChip(text, animate = true) {
 // ─── Round events ─────────────────────────────────────────────────────────────
 
 socket.on('round:started', ({ category, endsAt }) => {
-  if (state.status !== 'active') return;
-  state.myAnswers = [];
+  if (pState.status !== 'active') return;
+  pState.myAnswers = [];
   sfx.roundStart();
   enterRound(category, endsAt, []);
 });
 
 socket.on('round:tick', ({ remaining }) => {
-  if (state.phase !== 'round') return;
+  if (pState.phase !== 'round') return;
   const el = document.getElementById('countdown');
   if (!el) return;
   el.textContent = remaining;
   el.classList.toggle('urgent', remaining <= 10 && remaining > 0);
-  if (remaining <= 10 && remaining > 0 && remaining !== state.lastTickSec) {
-    state.lastTickSec = remaining;
+  if (remaining <= 10 && remaining > 0 && remaining !== pState.lastTickSec) {
+    pState.lastTickSec = remaining;
     remaining <= 5 ? sfx.urgentTick() : sfx.tick();
   }
 });
 
 socket.on('round:time_up', () => {
-  if (state.status !== 'active') return;
-  clearInterval(state.tickInterval);
-  state.phase = 'adjudication';
+  if (pState.status !== 'active') return;
+  clearInterval(pState.tickInterval);
+  pState.phase = 'adjudication';
   sfx.timeUp();
   document.getElementById('answer-input').disabled = true;
   document.getElementById('btn-submit-answer').disabled = true;
@@ -360,29 +424,29 @@ socket.on('round:time_up', () => {
 });
 
 socket.on('round:reset', () => {
-  state.phase = 'lobby';
-  clearInterval(state.tickInterval);
-  clearInterval(state.specTickInterval);
-  if (state.status !== 'active') showSpectatorIdle();
+  pState.phase = 'lobby';
+  clearInterval(pState.tickInterval);
+  clearInterval(pState.specTickInterval);
+  if (pState.status !== 'active') showSpectatorIdle();
   else showGameState('waiting');
 });
 
-// ─── Gulag & duel (player) ──────────────────────────────────────────────────
+// ─── Gulag & duel ─────────────────────────────────────────────────────────────
 
 socket.on('gulag:entered', () => {
-  state.status = 'gulag';
-  clearInterval(state.tickInterval);
-  sfx.gulagEnter();           // ominous drop instead of generic bad score
+  pState.status = 'gulag';
+  clearInterval(pState.tickInterval);
+  sfx.gulagEnter();
   showGameState('gulagWait');
 });
 
 function enterDuel(category, endsAt, opponent, existingAnswers) {
-  state.phase     = 'duel';
-  state.roundEndsAt = endsAt;
-  state.lastTickSec = -1;
+  pState.phase      = 'duel';
+  pState.roundEndsAt = endsAt;
+  pState.lastTickSec = -1;
 
-  document.getElementById('duel-opponent').textContent  = opponent || '—';
-  document.getElementById('duel-category').textContent  = category;
+  document.getElementById('duel-opponent').textContent = opponent || '—';
+  document.getElementById('duel-category').textContent = category;
 
   const input = document.getElementById('duel-input');
   input.value = '';
@@ -396,61 +460,58 @@ function enterDuel(category, endsAt, opponent, existingAnswers) {
   showGameState('duel');
   startDuelCountdown(endsAt);
 
-  // Flash the duel card on entry
   const duelCard = document.querySelector('#state-duel .duel-card');
   if (duelCard) {
     duelCard.classList.remove('round-start-flash');
     void duelCard.offsetWidth;
     duelCard.classList.add('round-start-flash');
   }
-
   input.focus();
 }
 
 socket.on('duel:started', ({ category, endsAt, opponent }) => {
-  state.status = 'gulag';
+  pState.status = 'gulag';
   sfx.duelStart();
   enterDuel(category, endsAt, opponent, []);
 });
 
 function startDuelCountdown(endsAt) {
-  clearInterval(state.tickInterval);
-  state.lastTickSec = -1;
+  clearInterval(pState.tickInterval);
+  pState.lastTickSec = -1;
   const el = document.getElementById('duel-countdown');
   function tick() {
     const rem = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
     el.textContent = rem;
     el.classList.toggle('urgent', rem <= 10);
-    // Ticks during duel too — tension matters
-    if (rem <= 10 && rem > 0 && rem !== state.lastTickSec) {
-      state.lastTickSec = rem;
+    if (rem <= 10 && rem > 0 && rem !== pState.lastTickSec) {
+      pState.lastTickSec = rem;
       rem <= 5 ? sfx.urgentTick() : sfx.tick();
     }
-    if (rem <= 0) clearInterval(state.tickInterval);
+    if (rem <= 0) clearInterval(pState.tickInterval);
   }
   tick();
-  state.tickInterval = setInterval(tick, 250);
+  pState.tickInterval = setInterval(tick, 250);
 }
 
-document.getElementById('btn-duel-submit').addEventListener('click', submitDuelAnswer);
-document.getElementById('duel-input').addEventListener('keydown', e => {
+document.getElementById('btn-duel-submit')?.addEventListener('click', submitDuelAnswer);
+document.getElementById('duel-input')?.addEventListener('keydown', e => {
   if (e.key === 'Enter') submitDuelAnswer();
 });
 
 function submitDuelAnswer() {
   const input  = document.getElementById('duel-input');
   const answer = input.value.trim();
-  if (!answer || state.phase !== 'duel') return;
+  if (!answer || pState.phase !== 'duel') return;
   document.getElementById('btn-duel-submit').disabled = true;
-  socket.emit('player:submit_answer', { code: state.roomCode, answer });
+  socket.emit('player:submit_answer', { code: pState.roomCode, answer });
   input.value = '';
   input.focus();
   setTimeout(() => { document.getElementById('btn-duel-submit').disabled = false; }, 200);
 }
 
 socket.on('duel:tick', ({ remaining }) => {
-  const id = state.phase === 'duel'     ? 'duel-countdown'
-           : state.phase === 'spectate' ? 'spectate-countdown' : null;
+  const id = pState.phase === 'duel'     ? 'duel-countdown'
+           : pState.phase === 'spectate' ? 'spectate-countdown' : null;
   if (!id) return;
   const el = document.getElementById(id);
   if (!el) return;
@@ -459,19 +520,19 @@ socket.on('duel:tick', ({ remaining }) => {
 });
 
 socket.on('duel:time_up', () => {
-  if (state.phase === 'duel') {
-    clearInterval(state.tickInterval);
+  if (pState.phase === 'duel') {
+    clearInterval(pState.tickInterval);
     document.getElementById('duel-input').disabled = true;
     document.getElementById('btn-duel-submit').disabled = true;
     sfx.timeUp();
   } else {
-    clearInterval(state.specTickInterval);
+    clearInterval(pState.specTickInterval);
   }
 });
 
 socket.on('duel:result', ({ winnerId, loserId, winnerNick, loserNick }) => {
-  if (winnerId === state.playerId) {
-    state.status = 'active';
+  if (winnerId === pState.playerId) {
+    pState.status = 'active';
     document.getElementById('duel-result-emoji').textContent = '🎉';
     const msg = document.getElementById('duel-result-msg');
     msg.textContent = 'نجوت!';
@@ -479,8 +540,8 @@ socket.on('duel:result', ({ winnerId, loserId, winnerNick, loserNick }) => {
     document.getElementById('duel-result-sub').textContent = 'ترجع للمنافسة — استعدّ للجولة القادمة.';
     showGameState('duelResult');
     sfx.duelWin();
-  } else if (loserId === state.playerId) {
-    state.status = 'out';
+  } else if (loserId === pState.playerId) {
+    pState.status = 'out';
     document.getElementById('duel-result-emoji').textContent = '💀';
     const msg = document.getElementById('duel-result-msg');
     msg.textContent = 'خرجت من اللعبة';
@@ -491,16 +552,16 @@ socket.on('duel:result', ({ winnerId, loserId, winnerNick, loserNick }) => {
   } else {
     const banner = document.getElementById('spectate-banner');
     if (banner) banner.textContent = `⚔️ ${winnerNick} فاز على ${loserNick}`;
-    clearInterval(state.specTickInterval);
+    clearInterval(pState.specTickInterval);
   }
 });
 
-// ─── Spectator live view ────────────────────────────────────────────────────
+// ─── Spectator live view ──────────────────────────────────────────────────────
 
 function enterSpectate(info) {
-  state.phase = 'spectate';
-  clearInterval(state.tickInterval);
-  clearInterval(state.specTickInterval);
+  pState.phase = 'spectate';
+  clearInterval(pState.tickInterval);
+  clearInterval(pState.specTickInterval);
   document.getElementById('spectate-banner').textContent =
     info.isDuel ? '⚔️ مبارزة الـ Gulag' : '👀 أنت تتفرّج';
   document.getElementById('spectate-category').textContent = info.category || '';
@@ -517,7 +578,7 @@ function enterSpectate(info) {
 function buildSpectateGrid(players) {
   const grid = document.getElementById('spectate-grid');
   grid.innerHTML = '';
-  state.specBoxes = {};
+  pState.specBoxes = {};
   players.forEach(p => {
     const box = document.createElement('div');
     box.className = 'spec-box';
@@ -526,57 +587,52 @@ function buildSpectateGrid(players) {
       <div class="spec-chips"></div>
     `;
     grid.appendChild(box);
-    state.specBoxes[p.playerId] = box.querySelector('.spec-chips');
+    pState.specBoxes[p.playerId] = box.querySelector('.spec-chips');
   });
 }
 
 function addSpectateChip(playerId, answer, animate = true) {
-  prependChip(state.specBoxes[playerId], answer, animate);
+  prependChip(pState.specBoxes[playerId], answer, animate);
 }
 
 function startSpectateCountdown(endsAt) {
-  clearInterval(state.specTickInterval);
+  clearInterval(pState.specTickInterval);
   const el = document.getElementById('spectate-countdown');
   if (!endsAt) { el.textContent = ''; return; }
   function tick() {
     const rem = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
     el.textContent = rem;
     el.classList.toggle('urgent', rem <= 10);
-    if (rem <= 0) clearInterval(state.specTickInterval);
+    if (rem <= 0) clearInterval(pState.specTickInterval);
   }
   tick();
-  state.specTickInterval = setInterval(tick, 250);
+  pState.specTickInterval = setInterval(tick, 250);
 }
 
 socket.on('spectate:round_start', (info) => {
-  if (state.status === 'active') return;
+  if (pState.status === 'active') return;
   enterSpectate({ ...info, isDuel: false });
 });
-
 socket.on('duel:spectate_start', (info) => {
   enterSpectate({ ...info, isDuel: true });
 });
-
 socket.on('spectate:answer', ({ playerId, answer }) => {
-  if (state.phase === 'spectate') addSpectateChip(playerId, answer, true);
+  if (pState.phase === 'spectate') addSpectateChip(playerId, answer, true);
 });
-
 socket.on('duel:spectate_answer', ({ playerId, answer }) => {
-  if (state.phase === 'spectate') addSpectateChip(playerId, answer, true);
+  if (pState.phase === 'spectate') addSpectateChip(playerId, answer, true);
 });
-
 socket.on('spectate:round_end', () => {
-  clearInterval(state.specTickInterval);
+  clearInterval(pState.specTickInterval);
 });
 
 // ─── Results / leaderboard ────────────────────────────────────────────────────
 
 socket.on('round:results', ({ leaderboard, roundNumber }) => {
-  state.phase = 'results';
+  pState.phase = 'results';
   renderLeaderboard(leaderboard, roundNumber);
   showGameState('results');
-
-  const mine = leaderboard.find(e => e.playerId === state.playerId);
+  const mine = leaderboard.find(e => e.playerId === pState.playerId);
   if (mine) {
     setTimeout(() => {
       if (mine.roundScore > 0)      sfx.goodScore();
@@ -589,15 +645,13 @@ function renderLeaderboard(leaderboard, roundNumber) {
   document.getElementById('results-round-num').textContent = roundNumber;
   const tbody = document.getElementById('results-tbody');
   tbody.innerHTML = '';
-
   leaderboard.forEach((entry, idx) => {
-    const tr  = document.createElement('tr');
-    const isMe = entry.playerId === state.playerId;
-    if (isMe)        tr.className = 'my-row lb-row-enter';
+    const tr   = document.createElement('tr');
+    const isMe = entry.playerId === pState.playerId;
+    if (isMe)         tr.className = 'my-row lb-row-enter';
     else if (idx===0) tr.className = 'rank-1-row lb-row-enter';
     else              tr.className = 'lb-row-enter';
     tr.style.setProperty('--row-delay', `${idx * 70}ms`);
-
     const sign  = entry.roundScore > 0 ? '+' : '';
     const cls   = entry.roundScore > 0 ? 'delta-pos' : entry.roundScore < 0 ? 'delta-neg' : 'delta-zero';
     const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '';
@@ -614,7 +668,7 @@ function renderLeaderboard(leaderboard, roundNumber) {
 // ─── Final screen ─────────────────────────────────────────────────────────────
 
 socket.on('game:finished', ({ leaderboard }) => {
-  state.phase = 'finished';
+  pState.phase = 'finished';
   renderFinal(leaderboard);
   showGameState('final');
   sfx.fanfare();
@@ -626,13 +680,9 @@ function renderFinal(leaderboard) {
   const tbody = document.getElementById('final-tbody');
   tbody.innerHTML = '';
   leaderboard.forEach((entry, idx) => {
-    const isMe = entry.playerId === state.playerId;
+    const isMe = entry.playerId === pState.playerId;
     const tr   = document.createElement('tr');
-    tr.className = [
-      isMe ? 'my-row' : '',
-      idx === 0 ? 'rank-1-row' : '',
-      'lb-row-enter',
-    ].filter(Boolean).join(' ');
+    tr.className = [isMe ? 'my-row' : '', idx === 0 ? 'rank-1-row' : '', 'lb-row-enter'].filter(Boolean).join(' ');
     tr.style.setProperty('--row-delay', `${idx * 60}ms`);
     const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '';
     tr.innerHTML = `
@@ -648,8 +698,9 @@ function renderFinal(leaderboard) {
 
 function renderPodium(containerId, leaderboard) {
   const wrap = document.getElementById(containerId);
+  if (!wrap) return;
   wrap.innerHTML = '';
-  const top3  = leaderboard.slice(0, 3);
+  const top3    = leaderboard.slice(0, 3);
   if (!top3.length) return;
   const slots   = [top3[1], top3[0], top3[2]];
   const classes = ['second','first','third'];
@@ -669,18 +720,18 @@ function renderPodium(containerId, leaderboard) {
   });
 }
 
-// ─── Kick / room closed ───────────────────────────────────────────────────────
+// ─── Kicked / room closed ─────────────────────────────────────────────────────
 
 socket.on('player:kicked', () => {
   clearPlayerStorage();
-  clearInterval(state.tickInterval);
+  clearInterval(pState.tickInterval);
   showJoinError('تمت إزالتك من الغرفة');
   showScreen('join');
 });
 
 socket.on('room:closed', () => {
   clearPlayerStorage();
-  clearInterval(state.tickInterval);
+  clearInterval(pState.tickInterval);
   showJoinError('تم إغلاق الغرفة');
   showScreen('join');
 });
@@ -691,7 +742,9 @@ socket.on('disconnect', () => setConnectionStatus('reconnecting'));
 socket.on('connect_error', () => setConnectionStatus('disconnected'));
 socket.on('connect', () => {
   setConnectionStatus('connected');
-  if (state.playerId && state.roomCode) attemptJoin(state.roomCode, state.nickname, state.playerId);
+  if (pState.playerId && pState.roomCode) {
+    attemptJoin(pState.roomCode, pState.nickname, pState.playerId);
+  }
 });
 
 // ─── Confetti ─────────────────────────────────────────────────────────────────

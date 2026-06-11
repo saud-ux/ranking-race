@@ -1,473 +1,944 @@
-<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-  <title>سباق التصنيف</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/style.css">
-</head>
-<body>
+(function() {
 
-  <!-- ══════════════════════════════════════════════════════════
-       SCREEN 1 — Main Menu
-  ══════════════════════════════════════════════════════════ -->
-  <div id="screen-menu" class="screen active">
-    <div class="menu-bg-grid"></div>
-    <div class="menu-wrap">
+const PRESETS = [
+  'فواكه','خضار','دول','مدن سعودية','أسماء أولاد','أسماء بنات',
+  'حيوانات','ماركات سيارات','أكلات','لاعبين كرة قدم','مهن','ألوان',
+];
 
-      <!-- Logo -->
-      <div class="menu-logo-wrap">
-        <div class="menu-flag">🏁</div>
-        <h1 class="menu-title">سباق التصنيف</h1>
-        <p class="menu-tagline">من يُصنّف أكثر… يفوز</p>
-      </div>
+// ─── Audio engine ─────────────────────────────────────────────────────────────
 
-      <!-- Actions -->
-      <div class="menu-actions">
+let audioCtx = null;
+let muted = localStorage.getItem('muted') === '1';
 
-        <!-- Host flow -->
-        <button id="menu-btn-host" class="menu-btn menu-btn-host">
-          <span class="menu-btn-icon">👑</span>
-          <span class="menu-btn-label">أنا المضيف</span>
-          <span class="menu-btn-sub">أنشئ غرفة وابدأ اللعبة</span>
-        </button>
+function getCtx() {
+  if (!audioCtx) {
+    const C = window.AudioContext || window.webkitAudioContext;
+    if (C) audioCtx = new C();
+  }
+  if (audioCtx?.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
 
-        <div class="menu-divider"><span>أو</span></div>
+document.addEventListener('pointerdown', () => getCtx(), { once: false, passive: true });
 
-        <!-- Player flow -->
-        <button id="menu-btn-join" class="menu-btn menu-btn-join">
-          <span class="menu-btn-icon">🎮</span>
-          <span class="menu-btn-label">انضم للعبة</span>
-          <span class="menu-btn-sub">أدخل كود الغرفة والعب</span>
-        </button>
+function beep(freq, dur, type = 'sine', vol = 0.22) {
+  if (muted) return;
+  const ctx = getCtx();
+  if (!ctx) return;
+  const osc  = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, ctx.currentTime);
+  gain.gain.setValueAtTime(vol, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+  osc.start();
+  osc.stop(ctx.currentTime + dur);
+}
 
-      </div>
+function seq(notes) {
+  notes.forEach(n => setTimeout(() => beep(n.f, n.d, n.t || 'sine', n.v || 0.22), n.at || 0));
+}
 
-      <p class="menu-footer">حتى ٢٠ لاعب في الغرفة الواحدة</p>
-    </div>
-  </div>
+function sweep(f1, f2, dur, type = 'sawtooth', vol = 0.25) {
+  if (muted) return;
+  const ctx = getCtx();
+  if (!ctx) return;
+  const osc  = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.type = type;
+  osc.frequency.setValueAtTime(f1, ctx.currentTime);
+  osc.frequency.linearRampToValueAtTime(f2, ctx.currentTime + dur);
+  gain.gain.setValueAtTime(vol, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+  osc.start();
+  osc.stop(ctx.currentTime + dur);
+}
 
-  <!-- ══════════════════════════════════════════════════════════
-       SCREEN 2 — Host: Lock (key entry)
-  ══════════════════════════════════════════════════════════ -->
-  <div id="screen-lock" class="screen lock-screen">
-    <div class="card center-card">
-      <button id="lock-back-btn" class="back-btn">← رجوع</button>
-      <div class="lock-title">👑 المضيف</div>
-      <div class="lock-subtitle">أدخل مفتاح المضيف للمتابعة</div>
-      <div class="form-group">
-        <input id="input-host-key" class="input" type="password"
-               placeholder="مفتاح المضيف" autocomplete="off"
-               style="text-align:center;letter-spacing:4px;">
-      </div>
-      <button id="btn-unlock" class="btn btn-primary btn-large">دخول</button>
-      <p id="lock-error" class="error-text"></p>
-    </div>
-  </div>
+const sfx = {
+  playerJoin()   { seq([{f:660,d:0.10,at:0},{f:880,d:0.10,at:90}]); },
+  roundStart()   { seq([{f:400,d:0.09,at:0},{f:600,d:0.09,at:80},{f:900,d:0.18,at:160}]); },
+  timeUp()       { sweep(480, 90, 0.75, 'sawtooth', 0.28); },
+  adjReject()    { beep(220, 0.18, 'square', 0.15); },
+  adjAccept()    { beep(660, 0.12, 'sine', 0.15); },
+  scored()       { seq([{f:523,d:0.12,at:0},{f:659,d:0.12,at:110},{f:784,d:0.22,at:220}]); },
+  tick()         { beep(560, 0.07, 'square', 0.08); },
+  urgentTick()   { beep(880, 0.07, 'square', 0.12); },
+  gulagAlert()   { seq([{f:300,d:0.12,at:0},{f:200,d:0.22,at:130}]); },
+  duelStart()    {
+    seq([
+      {f:200,d:0.10,at:0},{f:250,d:0.10,at:100},
+      {f:300,d:0.10,at:200},{f:450,d:0.25,at:320},
+    ]);
+  },
+  fanfare()      {
+    seq([
+      {f:523,d:0.13,at:0},   {f:523,d:0.13,at:140},
+      {f:523,d:0.13,at:280}, {f:698,d:0.35,at:420},
+      {f:659,d:0.35,at:780}, {f:587,d:0.13,at:1100},
+      {f:784,d:0.55,at:1240},
+    ]);
+  },
+};
 
-  <!-- ══════════════════════════════════════════════════════════
-       SCREEN 3 — Host: Console
-  ══════════════════════════════════════════════════════════ -->
-  <div id="screen-console" class="screen host-console">
+// ─── Mute toggle ──────────────────────────────────────────────────────────────
 
-    <div class="host-header">
-      <span class="host-header-title">🏁 سباق التصنيف — المضيف</span>
-      <div style="display:flex;align-items:center;gap:10px;">
-        <span id="host-conn-label" class="conn-label">متصل</span>
-        <span id="host-status-dot" class="status-dot connected"></span>
-        <button id="host-mute-btn" class="mute-btn" title="كتم الصوت">🔊</button>
-        <button id="btn-logout" class="btn btn-secondary btn-small">خروج ⏏</button>
-      </div>
-    </div>
+function updateMuteBtn() {
+  const btn = document.getElementById('host-mute-btn');
+  if (!btn) return;
+  btn.textContent = muted ? '🔇' : '🔊';
+  btn.title = muted ? 'تشغيل الصوت' : 'كتم الصوت';
+}
+updateMuteBtn();
 
-    <div class="host-body">
+document.getElementById('host-mute-btn')?.addEventListener('click', () => {
+  muted = !muted;
+  localStorage.setItem('muted', muted ? '1' : '0');
+  updateMuteBtn();
+});
 
-      <!-- No-room panel -->
-      <div id="panel-no-room" class="no-room-panel">
-        <h2>مرحباً بك!</h2>
-        <p>أنشئ غرفة جديدة للبدء</p>
-        <button id="btn-create-room" class="btn btn-primary" style="padding:16px 40px;font-size:1.1rem;">
-          إنشاء غرفة
-        </button>
-      </div>
+// ─── State ────────────────────────────────────────────────────────────────────
 
-      <!-- Room info: code + QR -->
-      <div id="panel-room-info" class="room-info-panel card hidden">
-        <div class="room-code-wrap">
-          <div class="room-code-label">كود الغرفة</div>
-          <div id="room-code-display" class="room-code-display">—</div>
-        </div>
-        <div class="qr-wrap">
-          <div id="qr-container" style="width:180px;height:180px;display:flex;align-items:center;justify-content:center;">
-            <canvas id="qr-canvas"></canvas>
-            <img id="qr-img" class="qr-img" alt="QR" src="" style="display:none;">
-          </div>
-          <div id="qr-url" class="qr-url"></div>
-        </div>
-      </div>
+let state = {
+  hostKey: localStorage.getItem('hostKey'),
+  roomCode: localStorage.getItem('hostRoomCode'),
+  phase: 'no-room',
+  selectedCategory: '',
+  adjState: {},
+  adjMode: 'round',
+  prevPlayerCount: 0,
+  gulagPending: null,
+  duelBoxes: {},
+  duelTickInterval: null,
+  roundTickInterval: null,
+  lastTickSec: -1,
+};
 
-      <!-- Right column: player list + round controls -->
-      <div id="panel-right" class="hidden" style="display:flex;flex-direction:column;gap:16px;">
+// ─── Screen helpers ───────────────────────────────────────────────────────────
 
-        <div class="card player-list-panel">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-            <span class="section-title" style="margin:0;">اللاعبون</span>
-            <span id="player-count-badge" class="player-count-badge">0 / 20</span>
-          </div>
-          <div id="player-list" class="player-list">
-            <p class="text-muted" style="font-size:0.9rem;text-align:center;padding:12px 0;">لم ينضم أحد بعد…</p>
-          </div>
-        </div>
 
-        <div id="round-controls" class="card round-panel hidden">
-          <div class="section-title">إعداد الجولة</div>
-          <div class="form-group mb-8">
-            <label>اختر فئة</label>
-            <div class="preset-grid" id="preset-grid"></div>
-          </div>
-          <div class="form-group">
-            <label for="custom-category">أو اكتب فئة مخصصة</label>
-            <input id="custom-category" class="input" type="text"
-                   placeholder="مثال: أفلام ديزني" maxlength="40" autocomplete="off">
-          </div>
-          <div id="selected-category-display" class="hidden"
-               style="background:var(--surface-2);border:1px solid var(--accent);border-radius:8px;
-                      padding:10px 14px;text-align:center;font-weight:700;color:var(--accent);font-size:1.05rem;">
-          </div>
-          <button id="btn-start-round" class="btn btn-success w-full" disabled>ابدأ الجولة</button>
-          <p id="round-error" class="error-text"></p>
-        </div>
 
-      </div>
+function hostGoToMenu() {
+  localStorage.removeItem('hostKey');
+  localStorage.removeItem('hostRoomCode');
+  state.hostKey = null;
+  state.roomCode = null;
+  state.prevPlayerCount = 0;
+  clearInterval(state.roundTickInterval);
+  clearInterval(state.duelTickInterval);
+  showScreen('menu');
+}
 
-      <!-- Live round panel -->
-      <div id="panel-round-live" class="card round-live-panel hidden">
-        <div class="round-live-head">
-          <div>
-            <div class="section-title" style="margin:0;">جولة جارية ⏱️</div>
-            <div id="round-live-category" class="round-live-category">—</div>
-          </div>
-          <div id="round-live-countdown" class="duel-countdown-badge">30</div>
-        </div>
-      </div>
+function showHostPhase(phase) {
+  state.phase = phase;
+  state.lastTickSec = -1;
 
-      <!-- Adjudication panel -->
-      <div id="panel-adjudication" class="card adj-panel hidden">
-        <div class="adj-header">
-          <div>
-            <div class="section-title" style="margin:0;">
-              تحكيم — <span id="adj-category"></span>
-              <span style="color:var(--text-muted);font-weight:400;font-size:0.85rem;"> (جولة <span id="adj-round-num"></span>)</span>
-            </div>
-            <div class="adj-stats" id="adj-stats"></div>
-          </div>
-          <button id="btn-score-round" class="btn btn-primary">احتساب النقاط</button>
-        </div>
-        <input id="adj-search" class="adj-search" type="text"
-               placeholder="🔍  ابحث في الإجابات…" autocomplete="off">
-        <div id="adj-list" class="adj-list"></div>
-        <p class="text-muted" style="font-size:0.8rem;text-align:center;">
-          الافتراضي ✓ صحيح — اضغط على ✗ لرفض الإجابات الخاطئة فقط
-        </p>
-      </div>
+  const allPanels = [
+    'panel-no-room','panel-room-info','panel-right',
+    'panel-adjudication','panel-leaderboard','panel-final',
+    'panel-duel','panel-duel-result','panel-round-live',
+  ];
+  allPanels.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.add('hidden');
+    if (id === 'panel-right') el.style.display = 'none';
+  });
+  document.getElementById('round-controls')?.classList.add('hidden');
 
-      <!-- Leaderboard panel -->
-      <div id="panel-leaderboard" class="card lb-panel hidden">
-        <div class="lb-header">
-          <div class="section-title" style="margin:0;">
-            🏆 النتائج — الجولة <span id="lb-round-num"></span>
-          </div>
-          <div class="lb-actions">
-            <button id="btn-new-round" class="btn btn-primary btn-small">جولة جديدة</button>
-            <button id="btn-end-game" class="btn btn-secondary btn-small">إنهاء اللعبة</button>
-          </div>
-        </div>
-        <table class="leaderboard-table">
-          <thead>
-            <tr>
-              <th style="text-align:center;">#</th>
-              <th>الاسم</th>
-              <th style="text-align:center;">هذه الجولة</th>
-              <th style="text-align:center;">المجموع</th>
-            </tr>
-          </thead>
-          <tbody id="lb-tbody"></tbody>
-        </table>
-      </div>
+  function show(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.remove('hidden');
+    if (id === 'panel-right') el.style.display = 'flex';
+  }
 
-      <!-- Duel live panel -->
-      <div id="panel-duel" class="card duel-panel hidden">
-        <div class="duel-panel-head">
-          <div class="section-title" style="margin:0;">
-            ⚔️ مبارزة الـ Gulag — <span id="host-duel-category" style="color:var(--accent);"></span>
-          </div>
-          <div id="host-duel-countdown" class="duel-countdown-badge">20</div>
-        </div>
-        <div id="host-duel-boxes" class="duel-boxes"></div>
-      </div>
+  switch (phase) {
+    case 'no-room':
+      show('panel-no-room');
+      break;
+    case 'lobby':
+      show('panel-room-info');
+      show('panel-right');
+      show('round-controls');
+      break;
+    case 'round':
+      show('panel-room-info');
+      show('panel-right');
+      show('panel-round-live');
+      break;
+    case 'adjudication':
+    case 'duel_adjudication':
+      show('panel-room-info');
+      show('panel-right');
+      show('panel-adjudication');
+      break;
+    case 'results':
+      show('panel-room-info');
+      show('panel-right');
+      show('panel-leaderboard');
+      break;
+    case 'duel':
+      show('panel-room-info');
+      show('panel-right');
+      show('panel-duel');
+      break;
+    case 'duel_result':
+      show('panel-room-info');
+      show('panel-right');
+      show('panel-duel-result');
+      break;
+    case 'finished':
+      show('panel-final');
+      break;
+  }
+}
 
-      <!-- Duel result panel -->
-      <div id="panel-duel-result" class="card hidden" style="text-align:center;">
-        <div class="duel-result-emoji">⚔️</div>
-        <div id="duel-result-banner" class="duel-result-banner"></div>
-        <p id="duel-result-detail" class="text-muted mt-8"></p>
-        <button id="btn-duel-continue" class="btn btn-primary" style="margin-top:20px;padding:12px 36px;">متابعة</button>
-      </div>
+function setConnectionStatus(status) {
+  const dot   = document.getElementById('host-status-dot');
+  const label = document.getElementById('host-conn-label');
+  if (!dot) return;
+  dot.className = `status-dot ${status}`;
+  label.textContent = status === 'connected'    ? 'متصل'
+                    : status === 'reconnecting' ? 'إعادة الاتصال…' : 'منقطع';
+}
 
-      <!-- Final panel -->
-      <div id="panel-final" class="card final-panel hidden">
-        <div class="final-title">🎉 انتهت اللعبة!</div>
-        <p class="final-subtitle">النتائج النهائية</p>
-        <div id="host-podium" class="podium-wrap"></div>
-        <div class="divider"></div>
-        <table class="leaderboard-table mt-16">
-          <thead>
-            <tr>
-              <th style="text-align:center;">#</th>
-              <th>الاسم</th>
-              <th style="text-align:center;">المجموع</th>
-            </tr>
-          </thead>
-          <tbody id="final-tbody"></tbody>
-        </table>
-        <div style="margin-top:24px;">
-          <button id="btn-new-game" class="btn btn-primary" style="padding:14px 32px;">
-            إنشاء غرفة جديدة
-          </button>
-        </div>
-      </div>
+// ─── Main menu → host flow ────────────────────────────────────────────────────
 
-    </div>
+document.getElementById('menu-btn-host')?.addEventListener('click', () => {
+  getCtx();
+  // If already have a valid key stored, try to go straight to console
+  if (state.hostKey) {
+    socket.emit('host:authenticate', { key: state.hostKey }, (res) => {
+      if (res.ok) showMainConsole();
+      else {
+        localStorage.removeItem('hostKey');
+        state.hostKey = null;
+        showScreen('lock');
+      }
+    });
+  } else {
+    showScreen('lock');
+  }
+});
 
-    <!-- Gulag confirmation modal -->
-    <div id="gulag-modal" class="modal-overlay hidden">
-      <div class="modal-card">
-        <div class="modal-emoji">⛓️</div>
-        <div class="modal-title">إرسال إلى الـ Gulag؟</div>
-        <p id="gulag-modal-text" class="modal-text"></p>
-        <div class="modal-actions">
-          <button id="btn-gulag-yes" class="btn btn-danger">نعم، أرسله ⚔️</button>
-          <button id="btn-gulag-no" class="btn btn-secondary">تخطّي هذه الجولة</button>
-        </div>
-      </div>
-    </div>
+// Back button on lock screen
+document.getElementById('lock-back-btn')?.addEventListener('click', () => {
+  document.getElementById('lock-error').textContent = '';
+  document.getElementById('input-host-key').value = '';
+  showScreen('menu');
+});
 
-  </div>
+// ─── Lock screen ──────────────────────────────────────────────────────────────
 
-  <!-- ══════════════════════════════════════════════════════════
-       SCREEN 4 — Player: Join form
-  ══════════════════════════════════════════════════════════ -->
-  <div id="screen-join" class="screen">
-    <div style="display:flex;flex-direction:column;flex:1;justify-content:center;padding:16px;">
-      <div class="card center-card">
-        <button id="join-back-btn" class="back-btn">← رجوع</button>
-        <h2 class="join-title">🎮 انضم للعبة</h2>
+document.getElementById('btn-unlock')?.addEventListener('click', doUnlock);
+document.getElementById('input-host-key')?.addEventListener('keydown', e => { if (e.key === 'Enter') doUnlock(); });
 
-        <div class="form-group">
-          <label for="input-room-code">كود الغرفة</label>
-          <input id="input-room-code" class="input" type="text" placeholder="مثال: ABCD"
-                 maxlength="4" autocomplete="off" autocapitalize="characters" inputmode="text"
-                 style="text-transform:uppercase;letter-spacing:6px;font-size:1.4rem;text-align:center;">
-        </div>
-
-        <div class="form-group">
-          <label for="input-nickname">اسمك</label>
-          <input id="input-nickname" class="input" type="text" placeholder="اكتب اسمك (حتى ٢٠ حرف)"
-                 maxlength="20" autocomplete="off">
-        </div>
-
-        <button id="btn-join" class="btn btn-primary btn-large">دخول اللعبة</button>
-        <p id="join-error" class="error-text"></p>
-      </div>
-    </div>
-  </div>
-
-  <!-- ══════════════════════════════════════════════════════════
-       SCREEN 5 — Player: In-game
-  ══════════════════════════════════════════════════════════ -->
-  <div id="screen-lobby" class="screen">
-
-    <div class="top-bar">
-      <span id="display-nickname" class="nickname-badge"></span>
-      <div style="display:flex;align-items:center;gap:10px;">
-        <button id="mute-btn" class="mute-btn" title="كتم الصوت">🔊</button>
-        <button id="player-leave-btn" class="btn btn-secondary btn-small">خروج ⏏</button>
-        <div class="conn-status-wrap">
-          <span id="conn-label" class="conn-label">متصل</span>
-          <span id="status-dot" class="status-dot connected"></span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Waiting -->
-    <div id="state-waiting" class="card lobby-card">
-      <p style="font-size:2rem;">⏳</p>
-      <p class="lobby-message mt-8">في انتظار المضيف لبدء الجولة…</p>
-    </div>
-
-    <!-- In-round -->
-    <div id="state-round" class="hidden" style="padding:16px;max-width:520px;width:100%;margin:0 auto;">
-      <div class="card mb-16" style="text-align:center;">
-        <p class="text-muted mb-4" style="font-size:0.85rem;">الفئة</p>
-        <div id="category-display" class="category-display"></div>
-        <div id="countdown" class="countdown">30</div>
-      </div>
-      <div class="card">
-        <div class="answer-input-wrap">
-          <input id="answer-input" class="input" type="text" placeholder="اكتب إجابة واضغط إدخال…"
-                 autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-          <button id="btn-submit-answer" class="btn btn-primary">إرسال</button>
-        </div>
-        <div id="chips-area" class="chips-area"></div>
-      </div>
-    </div>
-
-    <!-- Round ended -->
-    <div id="state-ended" class="hidden">
-      <div class="card lobby-card" style="text-align:center;">
-        <div class="round-ended-msg">انتهى الوقت! ⏱️</div>
-        <p class="text-muted mt-8">في انتظار نتائج المضيف…</p>
-      </div>
-    </div>
-
-    <!-- Results -->
-    <div id="state-results" class="hidden">
-      <div class="card results-card">
-        <div class="results-header">
-          <div class="results-title">🏆 النتائج — الجولة <span id="results-round-num"></span></div>
-        </div>
-        <table class="leaderboard-table">
-          <thead>
-            <tr>
-              <th style="text-align:center;">#</th>
-              <th>الاسم</th>
-              <th style="text-align:center;">الجولة</th>
-              <th style="text-align:center;">المجموع</th>
-            </tr>
-          </thead>
-          <tbody id="results-tbody"></tbody>
-        </table>
-        <p class="waiting-for-host mt-16">في انتظار قرار المضيف…</p>
-      </div>
-    </div>
-
-    <!-- Gulag wait -->
-    <div id="state-gulagWait" class="hidden">
-      <div class="card lobby-card gulag-card" style="text-align:center;">
-        <p style="font-size:2.8rem;">⛓️</p>
-        <div class="round-ended-msg" style="color:var(--danger);">سقطت إلى الـ Gulag!</div>
-        <p class="text-muted mt-8">تنتظر خصماً… الفائز يرجع للمنافسة ⚔️</p>
-      </div>
-    </div>
-
-    <!-- Spectate idle -->
-    <div id="state-spectateIdle" class="hidden">
-      <div class="card lobby-card" style="text-align:center;">
-        <p style="font-size:2.4rem;">👀</p>
-        <div class="round-ended-msg">أنت متفرّج الآن</div>
-        <p class="text-muted mt-8">في انتظار الجولة القادمة…</p>
-      </div>
-    </div>
-
-    <!-- Duel -->
-    <div id="state-duel" class="hidden" style="padding:16px;max-width:520px;width:100%;margin:0 auto;">
-      <div class="card mb-16 duel-card" style="text-align:center;">
-        <div class="duel-tag">⚔️ مبارزة الـ Gulag</div>
-        <p class="text-muted mb-4" style="font-size:0.85rem;">ضد <span id="duel-opponent" class="duel-opponent"></span></p>
-        <div id="duel-category" class="category-display"></div>
-        <div id="duel-countdown" class="countdown">20</div>
-      </div>
-      <div class="card">
-        <div class="answer-input-wrap">
-          <input id="duel-input" class="input" type="text" placeholder="اكتب إجابة واضغط إدخال…"
-                 autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-          <button id="btn-duel-submit" class="btn btn-primary">إرسال</button>
-        </div>
-        <div id="duel-chips" class="chips-area"></div>
-      </div>
-    </div>
-
-    <!-- Duel result -->
-    <div id="state-duelResult" class="hidden">
-      <div class="card lobby-card" style="text-align:center;">
-        <p id="duel-result-emoji" style="font-size:3rem;"></p>
-        <div id="duel-result-msg" class="round-ended-msg"></div>
-        <p id="duel-result-sub" class="text-muted mt-8"></p>
-      </div>
-    </div>
-
-    <!-- Spectate live -->
-    <div id="state-spectate" class="hidden" style="padding:12px;width:100%;max-width:820px;margin:0 auto;">
-      <div class="card mb-16" style="text-align:center;">
-        <div id="spectate-banner" class="spectate-banner">👀 أنت تتفرّج</div>
-        <div id="spectate-category" class="category-display"></div>
-        <div id="spectate-countdown" class="countdown"></div>
-      </div>
-      <div id="spectate-grid" class="spectate-grid"></div>
-    </div>
-
-    <!-- Final -->
-    <div id="state-final" class="hidden">
-      <div class="card results-card" style="text-align:center;">
-        <div style="font-size:1.8rem;font-weight:900;color:var(--accent);">🎉 انتهت اللعبة!</div>
-        <p class="text-muted mt-8 mb-16">النتائج النهائية</p>
-        <div id="final-podium" class="podium-wrap"></div>
-        <div class="divider"></div>
-        <table class="leaderboard-table mt-16">
-          <thead>
-            <tr>
-              <th style="text-align:center;">#</th>
-              <th>الاسم</th>
-              <th style="text-align:center;">المجموع</th>
-            </tr>
-          </thead>
-          <tbody id="final-tbody"></tbody>
-        </table>
-        <button id="player-final-menu-btn" class="btn btn-primary" style="margin-top:24px;padding:14px 32px;">
-          القائمة الرئيسية
-        </button>
-      </div>
-    </div>
-
-  </div>
-
-  <!-- Leave game confirmation modal (player) -->
-  <div id="leave-modal" class="modal-overlay hidden">
-    <div class="modal-card" style="border-color:var(--border);">
-      <div class="modal-emoji">⏏️</div>
-      <div class="modal-title" style="color:var(--text);">مغادرة اللعبة؟</div>
-      <p class="modal-text" style="color:var(--text-muted);">ستُحذف من الغرفة وتعود للقائمة الرئيسية.</p>
-      <div class="modal-actions">
-        <button id="leave-confirm-btn" class="btn btn-danger">مغادرة</button>
-        <button id="leave-cancel-btn" class="btn btn-secondary">البقاء</button>
-      </div>
-    </div>
-  </div>
-
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"
-          onerror="loadQRFallback()"></script>
-  <script>
-    function loadQRFallback() {
-      var s = document.createElement('script');
-      s.src = 'https://unpkg.com/qrcode@1.5.3/build/qrcode.min.js';
-      document.head.appendChild(s);
+function doUnlock() {
+  const key = document.getElementById('input-host-key').value;
+  document.getElementById('lock-error').textContent = '';
+  getCtx();
+  socket.emit('host:authenticate', { key }, (res) => {
+    if (res.ok) {
+      state.hostKey = key;
+      localStorage.setItem('hostKey', key);
+      document.getElementById('input-host-key').value = '';
+      showMainConsole();
+    } else {
+      document.getElementById('lock-error').textContent = res.error || 'مفتاح خاطئ';
+      const input = document.getElementById('input-host-key');
+      input.classList.add('input-error-shake');
+      setTimeout(() => input.classList.remove('input-error-shake'), 500);
     }
-  </script>
-  <script>
-    // Shared socket instance used by both host.js and player.js
-    const socket = io();
+  });
+}
 
-    // Shared utility — both scripts use this
-    function showScreen(id) {
-      document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-      const el = document.getElementById('screen-' + id);
-      if (el) el.classList.add('active');
+function showMainConsole() {
+  showScreen('console');
+  buildPresets();
+  if (state.roomCode) tryRejoinRoom();
+  else showHostPhase('no-room');
+}
+
+// ─── Auto-restore host session on page load ───────────────────────────────────
+// Runs after socket is available (deferred to end of script via socket.on connect)
+
+function tryAutoRestoreHost() {
+  if (!state.hostKey) return;
+  socket.emit('host:authenticate', { key: state.hostKey }, (res) => {
+    if (res.ok) {
+      // Only auto-restore if no player state is active
+      const playerInGame = localStorage.getItem('playerId') && localStorage.getItem('roomCode');
+      if (!playerInGame) showMainConsole();
+    } else {
+      localStorage.removeItem('hostKey');
+      state.hostKey = null;
     }
-  </script>
-  <script src="/host.js"></script>
-  <script src="/player.js"></script>
-</body>
-</html>
+  });
+}
+
+// ─── Logout ───────────────────────────────────────────────────────────────────
+
+document.getElementById('btn-logout')?.addEventListener('click', hostGoToMenu);
+
+// ─── Create room ──────────────────────────────────────────────────────────────
+
+document.getElementById('btn-create-room')?.addEventListener('click', () => {
+  const btn = document.getElementById('btn-create-room');
+  btn.disabled = true;
+  socket.emit('host:create_room', { key: state.hostKey }, (res) => {
+    btn.disabled = false;
+    if (res.ok) {
+      state.roomCode = res.code;
+      localStorage.setItem('hostRoomCode', res.code);
+      setupRoomView(res.code);
+      showHostPhase('lobby');
+    }
+  });
+});
+
+// ─── Rejoin room ──────────────────────────────────────────────────────────────
+
+function tryRejoinRoom() {
+  socket.emit('host:rejoin_room', { key: state.hostKey, code: state.roomCode }, (res) => {
+    if (!res.ok) {
+      localStorage.removeItem('hostRoomCode');
+      state.roomCode = null;
+      showHostPhase('no-room');
+      return;
+    }
+    setupRoomView(state.roomCode);
+    renderPlayerList(res.players);
+
+    switch (res.phase) {
+      case 'round':
+        if (res.roundInfo) {
+          document.getElementById('round-live-category').textContent = res.roundInfo.category;
+          startHostRoundCountdown(res.roundInfo.endsAt);
+        }
+        showHostPhase('round');
+        break;
+      case 'adjudication':
+        state.adjMode = 'round';
+        if (res.adjGroups) renderAdjudicationPanel(res.adjGroups, res.adjCategory, res.roundNumber);
+        showHostPhase('adjudication');
+        break;
+      case 'duel':
+        if (res.duelSpectate) {
+          enterHostDuel(res.duelSpectate.category, res.duelSpectate.endsAt, res.duelSpectate.players);
+          const ans = res.duelSpectate.answers || {};
+          Object.keys(ans).forEach(pid => (ans[pid] || []).forEach(a => addHostDuelChip(pid, a)));
+        } else showHostPhase('duel');
+        break;
+      case 'duel_adjudication':
+        state.adjMode = 'duel';
+        if (res.duelGroups) renderAdjudicationPanel(res.duelGroups.groups, `${res.duelGroups.category} ⚔️`, '—');
+        showHostPhase('duel_adjudication');
+        break;
+      case 'duel_result':
+        if (res.duelResult) renderDuelResult(res.duelResult);
+        showHostPhase('duel_result');
+        break;
+      case 'results':
+        if (res.leaderboard) renderLeaderboard(res.leaderboard, res.roundNumber);
+        showHostPhase('results');
+        break;
+      case 'finished':
+        if (res.leaderboard) renderFinal(res.leaderboard);
+        showHostPhase('finished');
+        break;
+      default:
+        showHostPhase('lobby');
+    }
+
+    if (res.pendingGulag) {
+      state.gulagPending = { playerId: res.pendingGulag.playerId, nickname: res.pendingGulag.nickname };
+      renderGulagPrompt(res.pendingGulag);
+    }
+  });
+}
+
+// ─── Room view: code + QR ─────────────────────────────────────────────────────
+
+function setupRoomView(code) {
+  document.getElementById('room-code-display').textContent = code;
+  const joinUrl = `${window.location.origin}/?room=${code}`;
+  document.getElementById('qr-url').textContent = joinUrl;
+  generateQR(joinUrl);
+}
+
+function generateQR(url) {
+  const canvas = document.getElementById('qr-canvas');
+  const img    = document.getElementById('qr-img');
+
+  function tryGenerate() {
+    if (typeof QRCode === 'undefined') {
+      setTimeout(tryGenerate, 300);
+      return;
+    }
+    if (canvas && QRCode.toCanvas) {
+      QRCode.toCanvas(canvas, url, {
+        width: 180, margin: 1,
+        color: { dark: '#f59e0b', light: '#1a1a35' },
+      }, (err) => {
+        if (err) { tryDataURL(url); return; }
+        canvas.style.display = 'block';
+        canvas.style.border = '4px solid #f59e0b';
+        canvas.style.borderRadius = '8px';
+        if (img) img.style.display = 'none';
+      });
+    } else {
+      tryDataURL(url);
+    }
+  }
+
+  function tryDataURL(u) {
+    if (!QRCode?.toDataURL) return;
+    QRCode.toDataURL(u, {
+      width: 180, margin: 1,
+      color: { dark: '#f59e0b', light: '#1a1a35' },
+    }, (err, dataUrl) => {
+      if (err) return;
+      if (img) { img.src = dataUrl; img.style.display = 'block'; }
+      if (canvas) canvas.style.display = 'none';
+    });
+  }
+
+  tryGenerate();
+}
+
+// ─── Player list ──────────────────────────────────────────────────────────────
+
+function renderPlayerList(players) {
+  const list  = document.getElementById('player-list');
+  const badge = document.getElementById('player-count-badge');
+  badge.textContent = `${players.length} / 20`;
+
+  if (players.length > state.prevPlayerCount) sfx.playerJoin();
+  state.prevPlayerCount = players.length;
+
+  if (!players.length) {
+    list.innerHTML = '<p class="text-muted" style="font-size:0.9rem;text-align:center;padding:12px 0;">لم ينضم أحد بعد…</p>';
+    return;
+  }
+
+  const scrollTop = list.scrollTop;
+  list.innerHTML = '';
+
+  players.forEach((p, idx) => {
+    const row = document.createElement('div');
+    row.className = `player-row${p.connected ? '' : ' offline'}`;
+    if (p.status === 'out')   row.classList.add('player-out');
+    if (p.status === 'gulag') row.classList.add('player-gulag');
+    row.style.setProperty('--row-delay', `${idx * 40}ms`);
+    row.classList.add('lb-row-enter');
+
+    const statusBadge = p.status === 'out'   ? '<span class="status-pill pill-out">خارج</span>'
+                      : p.status === 'gulag' ? '<span class="status-pill pill-gulag">⛓️</span>'
+                      : '';
+    const pid = escapeHtml(p.playerId);
+    row.innerHTML = `
+      <span class="${p.connected ? 'online-dot' : 'offline-dot'}"></span>
+      <span class="player-name">${escapeHtml(p.nickname)}${statusBadge ? ' ' + statusBadge : ''}</span>
+      <div class="score-controls">
+        <button class="adj-btn adj-minus" data-pid="${pid}" title="−1">−</button>
+        <span class="player-score" id="score-${pid}">${p.score ?? 0}</span>
+        <button class="adj-btn adj-plus"  data-pid="${pid}" title="+1">+</button>
+      </div>
+      <button class="btn btn-danger btn-small kick-btn" data-pid="${pid}">طرد</button>
+    `;
+
+    row.querySelector('.adj-minus').addEventListener('click', e => {
+      const id = e.currentTarget.dataset.pid;
+      socket.emit('host:adjust_score', { code: state.roomCode, playerId: id, delta: -1 }, (res) => {
+        if (res?.ok) flashScore(id, false);
+      });
+    });
+    row.querySelector('.adj-plus').addEventListener('click', e => {
+      const id = e.currentTarget.dataset.pid;
+      socket.emit('host:adjust_score', { code: state.roomCode, playerId: id, delta: 1 }, (res) => {
+        if (res?.ok) flashScore(id, true);
+      });
+    });
+    row.querySelector('.kick-btn').addEventListener('click', e => {
+      socket.emit('host:kick', { code: state.roomCode, playerId: e.currentTarget.dataset.pid });
+    });
+
+    list.appendChild(row);
+  });
+
+  list.scrollTop = scrollTop;
+}
+
+function flashScore(pid, positive) {
+  const el = document.getElementById(`score-${escapeHtml(pid)}`);
+  if (!el) return;
+  el.classList.remove('score-flash-up', 'score-flash-down');
+  void el.offsetWidth;
+  el.classList.add(positive ? 'score-flash-up' : 'score-flash-down');
+  setTimeout(() => el.classList.remove('score-flash-up', 'score-flash-down'), 600);
+}
+
+socket.on('room:player_list', renderPlayerList);
+
+// ─── Category presets ─────────────────────────────────────────────────────────
+
+function buildPresets() {
+  const grid = document.getElementById('preset-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  PRESETS.forEach(cat => {
+    const btn = document.createElement('button');
+    btn.className = 'preset-btn';
+    btn.textContent = cat;
+    btn.addEventListener('click', () => selectPreset(cat, btn));
+    grid.appendChild(btn);
+  });
+}
+
+function selectPreset(cat, btn) {
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+  document.getElementById('custom-category').value = '';
+  setSelectedCategory(cat);
+}
+
+document.getElementById('custom-category')?.addEventListener('input', e => {
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('selected'));
+  setSelectedCategory(e.target.value.trim());
+});
+
+function setSelectedCategory(cat) {
+  state.selectedCategory = cat;
+  const display = document.getElementById('selected-category-display');
+  const btn     = document.getElementById('btn-start-round');
+  if (cat) { display.textContent = `الفئة: ${cat}`; display.classList.remove('hidden'); btn.disabled = false; }
+  else     { display.classList.add('hidden'); btn.disabled = true; }
+}
+
+// ─── Live round countdown ─────────────────────────────────────────────────────
+
+function startHostRoundCountdown(endsAt) {
+  clearInterval(state.roundTickInterval);
+  state.lastTickSec = -1;
+  const el = document.getElementById('round-live-countdown');
+  if (!el) return;
+
+  function tick() {
+    const rem = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+    el.textContent = rem;
+    el.classList.toggle('urgent', rem <= 10);
+    if (rem <= 10 && rem > 0 && rem !== state.lastTickSec) {
+      state.lastTickSec = rem;
+      rem <= 5 ? sfx.urgentTick() : sfx.tick();
+    }
+    if (rem <= 0) clearInterval(state.roundTickInterval);
+  }
+  tick();
+  state.roundTickInterval = setInterval(tick, 250);
+}
+
+// ─── Start round ──────────────────────────────────────────────────────────────
+
+document.getElementById('btn-start-round')?.addEventListener('click', () => {
+  if (!state.selectedCategory) return;
+  document.getElementById('round-error').textContent = '';
+  document.getElementById('btn-start-round').disabled = true;
+
+  socket.emit('host:start_round', { code: state.roomCode, category: state.selectedCategory }, (res) => {
+    if (res?.ok) {
+      sfx.roundStart();
+      document.getElementById('round-live-category').textContent = state.selectedCategory;
+      startHostRoundCountdown(res.endsAt);
+      showHostPhase('round');
+    } else {
+      document.getElementById('round-error').textContent = res?.error || 'حدث خطأ';
+      document.getElementById('btn-start-round').disabled = false;
+    }
+  });
+});
+
+// ─── Adjudication ─────────────────────────────────────────────────────────────
+
+socket.on('round:ended', ({ groups, category, roundNumber }) => {
+  clearInterval(state.roundTickInterval);
+  sfx.timeUp();
+  state.adjMode = 'round';
+  renderAdjudicationPanel(groups, category, roundNumber);
+  showHostPhase('adjudication');
+});
+
+function renderAdjudicationPanel(groups, category, roundNumber) {
+  document.getElementById('adj-category').textContent = category;
+  document.getElementById('adj-round-num').textContent = roundNumber;
+
+  const labelOccurrence = {};
+  const duplicateKeys = new Set();
+  groups.forEach(g => {
+    const seen = labelOccurrence[g.displayLabel] || 0;
+    if (seen >= 1) duplicateKeys.add(g.key);
+    labelOccurrence[g.displayLabel] = seen + 1;
+  });
+
+  state.adjState = {};
+  groups.forEach(g => { state.adjState[g.key] = !duplicateKeys.has(g.key); });
+  updateAdjStats(groups);
+
+  const list = document.getElementById('adj-list');
+  list.innerHTML = '';
+
+  groups.forEach((g, idx) => {
+    const isDup = duplicateKeys.has(g.key);
+    const initialValid = !isDup;
+    const nicks = g.playerNicks || [];
+
+    const row = document.createElement('div');
+    row.className = 'adj-row lb-row-enter' + (isDup ? ' rejected' : '');
+    row.style.setProperty('--row-delay', `${idx * 35}ms`);
+    row.dataset.key    = g.key;
+    row.dataset.label  = g.displayLabel;
+    row.dataset.search = `${g.displayLabel} ${nicks.join(' ')}`;
+
+    const nicksHtml = nicks.length
+      ? `<div class="adj-nicks">${nicks.map(n => `<span class="adj-nick">${escapeHtml(n)}</span>`).join('')}</div>`
+      : '';
+    const dupBadge = isDup
+      ? `<span class="adj-dup-badge" title="ظهرت نفس الكلمة في صف آخر">مكرّر</span>`
+      : '';
+
+    const uniqueClass = g.playerCount === 1 ? ' adj-row-unique' : '';
+    row.classList.add(...uniqueClass.trim().split(' ').filter(Boolean));
+
+    row.innerHTML = `
+      <button class="adj-toggle ${initialValid ? 'valid' : 'invalid'}" title="تبديل">${initialValid ? '✓' : '✗'}</button>
+      <div class="adj-label-wrap">
+        <div class="adj-label-row">
+          <span class="adj-label">${escapeHtml(g.displayLabel)}</span>
+          ${dupBadge}
+        </div>
+        ${nicksHtml}
+      </div>
+      <span class="adj-count-badge ${g.playerCount === 1 ? 'adj-count-unique' : ''}">${g.playerCount}</span>
+    `;
+
+    row.querySelector('.adj-toggle').addEventListener('click', (e) => {
+      const key  = row.dataset.key;
+      state.adjState[key] = !state.adjState[key];
+      const valid = state.adjState[key];
+      e.target.classList.toggle('valid',   valid);
+      e.target.classList.toggle('invalid', !valid);
+      e.target.textContent = valid ? '✓' : '✗';
+      row.classList.toggle('rejected', !valid);
+      if (!valid) {
+        row.classList.remove('shake'); void row.offsetWidth; row.classList.add('shake');
+        sfx.adjReject();
+      } else { sfx.adjAccept(); }
+      updateAdjStats(groups);
+    });
+
+    list.appendChild(row);
+  });
+
+  document.getElementById('adj-search').value = '';
+  document.getElementById('adj-search').oninput = (e) => {
+    const q = e.target.value.trim();
+    document.querySelectorAll('.adj-row').forEach(row => {
+      row.classList.toggle('hidden', !!q && !row.dataset.search.includes(q));
+    });
+  };
+}
+
+function updateAdjStats(groups) {
+  const valid   = groups.filter(g => state.adjState[g.key] !== false).length;
+  const invalid = groups.length - valid;
+  document.getElementById('adj-stats').innerHTML = `
+    <span class="adj-stat-valid">✓ مقبول: <strong>${valid}</strong></span>
+    <span class="adj-stat-invalid">✗ مرفوض: <strong>${invalid}</strong></span>
+    <span>الإجمالي: <strong>${groups.length}</strong></span>
+  `;
+}
+
+document.getElementById('btn-score-round')?.addEventListener('click', () => {
+  const decisions = Object.entries(state.adjState).map(([key, valid]) => ({ key, valid }));
+  const btn = document.getElementById('btn-score-round');
+  btn.disabled = true;
+  btn.textContent = 'جارٍ الاحتساب…';
+  const event = state.adjMode === 'duel' ? 'host:score_duel' : 'host:score_round';
+  socket.emit(event, { code: state.roomCode, decisions }, () => {
+    btn.disabled = false;
+    btn.textContent = 'احتساب النقاط';
+  });
+});
+
+// ─── Leaderboard ──────────────────────────────────────────────────────────────
+
+socket.on('round:results', ({ leaderboard, roundNumber }) => {
+  sfx.scored();
+  renderLeaderboard(leaderboard, roundNumber);
+  showHostPhase('results');
+});
+
+function renderLeaderboard(leaderboard, roundNumber) {
+  document.getElementById('lb-round-num').textContent = roundNumber;
+  const tbody = document.getElementById('lb-tbody');
+  tbody.innerHTML = '';
+  leaderboard.forEach((entry, idx) => {
+    const tr = document.createElement('tr');
+    tr.className = idx === 0 ? 'rank-1-row lb-row-enter' : 'lb-row-enter';
+    tr.style.setProperty('--row-delay', `${idx * 70}ms`);
+    const sign = entry.roundScore > 0 ? '+' : '';
+    const cls  = entry.roundScore > 0 ? 'delta-pos' : entry.roundScore < 0 ? 'delta-neg' : 'delta-zero';
+    const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '';
+    tr.innerHTML = `
+      <td class="rank-cell">${medal || entry.rank}</td>
+      <td class="name-cell">${escapeHtml(entry.nickname)}</td>
+      <td class="delta-cell ${cls} delta-pop" style="animation-delay:${idx*70+300}ms">${sign}${entry.roundScore}</td>
+      <td class="score-cell">${entry.totalScore}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById('btn-new-round')?.addEventListener('click', () => {
+  socket.emit('host:new_round', { code: state.roomCode }, (res) => {
+    if (res?.ok) { resetRoundControls(); showHostPhase('lobby'); }
+  });
+});
+
+document.getElementById('btn-end-game')?.addEventListener('click', () => {
+  socket.emit('host:end_game', { code: state.roomCode });
+});
+
+function resetRoundControls() {
+  state.selectedCategory = '';
+  document.getElementById('selected-category-display').classList.add('hidden');
+  document.getElementById('btn-start-round').disabled = true;
+  document.getElementById('custom-category').value = '';
+  document.getElementById('round-error').textContent = '';
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('selected'));
+}
+
+// ─── Gulag prompt modal ───────────────────────────────────────────────────────
+
+function showGulagModal(show) {
+  document.getElementById('gulag-modal').classList.toggle('hidden', !show);
+}
+
+function renderGulagPrompt({ nickname, willDuel, waitingNickname }) {
+  document.getElementById('gulag-modal-text').innerHTML = willDuel
+    ? `آخر لاعب بالترتيب: «${escapeHtml(nickname)}».<br>سينزل إلى الـ Gulag ويبارز «${escapeHtml(waitingNickname)}» مباشرةً ⚔️`
+    : `آخر لاعب بالترتيب: «${escapeHtml(nickname)}».<br>سينزل إلى الـ Gulag وينتظر خصمه القادم.`;
+  showGulagModal(true);
+}
+
+socket.on('gulag:prompt', (data) => {
+  state.gulagPending = { playerId: data.playerId, nickname: data.nickname };
+  renderGulagPrompt(data);
+  sfx.gulagAlert();
+});
+
+document.getElementById('btn-gulag-yes')?.addEventListener('click', () => {
+  socket.emit('host:gulag_decision', { code: state.roomCode, accept: true });
+  showGulagModal(false);
+  state.gulagPending = null;
+});
+document.getElementById('btn-gulag-no')?.addEventListener('click', () => {
+  socket.emit('host:gulag_decision', { code: state.roomCode, accept: false });
+  showGulagModal(false);
+  state.gulagPending = null;
+});
+
+// ─── Duel ─────────────────────────────────────────────────────────────────────
+
+function buildHostDuelBoxes(players) {
+  const wrap = document.getElementById('host-duel-boxes');
+  wrap.innerHTML = '';
+  state.duelBoxes = {};
+  (players || []).forEach(p => {
+    const box = document.createElement('div');
+    box.className = 'duel-box';
+    box.innerHTML = `
+      <div class="duel-box-name">${escapeHtml(p.nickname)}</div>
+      <div class="duel-box-chips chips-area"></div>
+    `;
+    wrap.appendChild(box);
+    state.duelBoxes[p.playerId] = box.querySelector('.duel-box-chips');
+  });
+}
+
+function addHostDuelChip(playerId, answer) {
+  const chips = state.duelBoxes[playerId];
+  if (!chips) return;
+  const chip = document.createElement('div');
+  chip.className = 'chip chip-new';
+  chip.textContent = answer;
+  chips.prepend(chip);
+}
+
+function startHostDuelCountdown(endsAt) {
+  clearInterval(state.duelTickInterval);
+  const el = document.getElementById('host-duel-countdown');
+  function tick() {
+    const rem = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+    el.textContent = rem;
+    el.classList.toggle('urgent', rem <= 10);
+    if (rem <= 0) clearInterval(state.duelTickInterval);
+  }
+  tick();
+  state.duelTickInterval = setInterval(tick, 250);
+}
+
+function enterHostDuel(category, endsAt, players) {
+  document.getElementById('host-duel-category').textContent = category;
+  buildHostDuelBoxes(players);
+  startHostDuelCountdown(endsAt);
+  showHostPhase('duel');
+  sfx.duelStart();
+}
+
+function renderDuelResult({ winnerNick, loserNick, champion }) {
+  document.getElementById('duel-result-banner').innerHTML =
+    `🏆 ${escapeHtml(winnerNick || '')} <span style="color:var(--text-muted);font-weight:400;">فاز على</span> ${escapeHtml(loserNick || '')}`;
+  document.getElementById('duel-result-detail').textContent = champion
+    ? 'لم يتبقَّ سوى لاعب واحد — جاهز للتتويج!'
+    : `${loserNick} يصبح متفرّجاً، و${winnerNick} يعود للمنافسة.`;
+  document.getElementById('btn-duel-continue').textContent = champion ? 'توّج البطل 🏆' : 'متابعة';
+}
+
+socket.on('duel:spectate_start', ({ category, endsAt, players }) => {
+  enterHostDuel(category, endsAt, players);
+});
+socket.on('duel:spectate_answer', ({ playerId, answer }) => addHostDuelChip(playerId, answer));
+socket.on('duel:tick', ({ remaining }) => {
+  if (state.phase !== 'duel') return;
+  const el = document.getElementById('host-duel-countdown');
+  el.textContent = remaining;
+  el.classList.toggle('urgent', remaining <= 10);
+});
+socket.on('duel:ended', ({ groups, category }) => {
+  clearInterval(state.duelTickInterval);
+  sfx.timeUp();
+  state.adjMode = 'duel';
+  renderAdjudicationPanel(groups, `${category} ⚔️`, '—');
+  showHostPhase('duel_adjudication');
+});
+socket.on('duel:result', (data) => {
+  renderDuelResult(data);
+  showHostPhase('duel_result');
+  sfx.scored();
+});
+
+document.getElementById('btn-duel-continue')?.addEventListener('click', () => {
+  const btn = document.getElementById('btn-duel-continue');
+  btn.disabled = true;
+  socket.emit('host:resume_lobby', { code: state.roomCode }, (res) => {
+    btn.disabled = false;
+    if (res?.ok && !res.finished) { resetRoundControls(); showHostPhase('lobby'); }
+  });
+});
+
+// ─── Final screen ─────────────────────────────────────────────────────────────
+
+socket.on('game:finished', ({ leaderboard }) => {
+  renderFinal(leaderboard);
+  showHostPhase('finished');
+  sfx.fanfare();
+  setTimeout(launchConfetti, 400);
+});
+
+function renderFinal(leaderboard) {
+  renderPodium('host-podium', leaderboard);
+  const tbody = document.getElementById('final-tbody');
+  tbody.innerHTML = '';
+  leaderboard.forEach((entry, idx) => {
+    const tr = document.createElement('tr');
+    tr.className = idx === 0 ? 'rank-1-row lb-row-enter' : 'lb-row-enter';
+    tr.style.setProperty('--row-delay', `${idx * 60}ms`);
+    const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '';
+    tr.innerHTML = `
+      <td class="rank-cell">${medal || entry.rank}</td>
+      <td class="name-cell">${escapeHtml(entry.nickname)}</td>
+      <td class="score-cell">${entry.totalScore}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById('btn-new-game')?.addEventListener('click', () => {
+  localStorage.removeItem('hostRoomCode');
+  state.roomCode = null;
+  state.prevPlayerCount = 0;
+  showHostPhase('no-room');
+});
+
+// ─── Podium ───────────────────────────────────────────────────────────────────
+
+function renderPodium(containerId, leaderboard) {
+  const wrap = document.getElementById(containerId);
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  const top3    = leaderboard.slice(0, 3);
+  if (!top3.length) return;
+  const slots   = [top3[1], top3[0], top3[2]];
+  const classes = ['second','first','third'];
+  const medals  = ['🥈','🥇','🥉'];
+  const labels  = ['2','1','3'];
+  slots.forEach((entry, i) => {
+    if (!entry) return;
+    const div = document.createElement('div');
+    div.className = `podium-item ${classes[i]}`;
+    div.innerHTML = `
+      <span class="podium-emoji">${medals[i]}</span>
+      <span class="podium-name">${escapeHtml(entry.nickname)}</span>
+      <span class="podium-score">${entry.totalScore} نقطة</span>
+      <div class="podium-stand">${labels[i]}</div>
+    `;
+    wrap.appendChild(div);
+  });
+}
+
+// ─── Confetti ─────────────────────────────────────────────────────────────────
+
+function launchConfetti() {
+  const colors = ['#f59e0b','#10b981','#7c3aed','#ef4444','#3b82f6','#f97316','#ec4899'];
+  for (let i = 0; i < 120; i++) {
+    const el   = document.createElement('div');
+    const size = Math.random() * 10 + 5;
+    const isRect = Math.random() > 0.5;
+    el.style.cssText = [
+      `position:fixed`,
+      `width:${isRect ? size * 1.6 : size}px`,
+      `height:${size}px`,
+      `background:${colors[Math.floor(Math.random() * colors.length)]}`,
+      `left:${Math.random() * 100}vw`,
+      `top:-12px`,
+      `border-radius:${isRect ? '2px' : '50%'}`,
+      `z-index:9999`,
+      `pointer-events:none`,
+      `animation:confetti-fall ${Math.random() * 2 + 2.5}s linear forwards`,
+      `animation-delay:${Math.random() * 2}s`,
+    ].join(';');
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 6000);
+  }
+}
+
+// ─── Utils ────────────────────────────────────────────────────────────────────
+
+function escapeHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ─── Connection ───────────────────────────────────────────────────────────────
+
+socket.on('disconnect', () => setConnectionStatus('reconnecting'));
+socket.on('connect_error', () => setConnectionStatus('disconnected'));
+socket.on('connect', () => {
+  setConnectionStatus('connected');
+  if (state.hostKey && state.roomCode) tryRejoinRoom();
+  else if (state.hostKey) tryAutoRestoreHost();
+});
+})();

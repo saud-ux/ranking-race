@@ -7,24 +7,23 @@ const { randomUUID } = require('crypto');
 const PORT = process.env.PORT || 3000;
 const HOST_KEY = process.env.HOST_KEY || 'host123';
 
-const ROOM_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no O, 0, I, 1
+const ROOM_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const ROOM_CODE_LENGTH = 4;
 const ROOM_CAP = 20;
 const ROUND_SECONDS = Number(process.env.ROUND_SECONDS) || 30;
 const HOST_GRACE_MS = 10 * 60 * 1000;
 const GC_INTERVAL_MS = 60 * 1000;
 
-// ─── Gulag (1v1 elimination) tuning ───────────────────────────────────────────
-const DUEL_SECONDS = Number(process.env.DUEL_SECONDS) || 20;  // length of a gulag duel
-const GULAG_FAST_THRESHOLD = 6;     // > this many active players ⇒ a drop every round
-const GULAG_CADENCE_SLOW = 2;       // otherwise, a drop every N main rounds
+const DUEL_SECONDS = Number(process.env.DUEL_SECONDS) || 20;
+const GULAG_FAST_THRESHOLD = 6;
+const GULAG_CADENCE_SLOW = 2;
 const DUEL_CATEGORIES = [
   'فواكه','خضار','دول','حيوانات','أكلات','ألوان','مهن','مدن سعودية',
 ];
 
-// ─── Arabic normalization (§8) ────────────────────────────────────────────────
+// ─── Arabic normalization ─────────────────────────────────────────────────────
 
-const STRIP_AL = true; // strips leading ال — may over-merge place names; flip false if needed
+const STRIP_AL = true;
 
 function normalizeArabic(raw) {
   let s = String(raw);
@@ -44,7 +43,7 @@ function normalizeArabic(raw) {
   return s.trim();
 }
 
-// ─── Answer grouping (§7) ─────────────────────────────────────────────────────
+// ─── Answer grouping ──────────────────────────────────────────────────────────
 
 function groupAnswers(round) {
   const perPlayerDeduped = new Map();
@@ -81,7 +80,6 @@ function groupAnswers(round) {
   return { groups, perPlayerDeduped };
 }
 
-// Attach player nicknames to grouped answers so the host knows who submitted what.
 function attachNicks(room, groups) {
   if (!groups) return [];
   return groups.map(g => ({
@@ -92,7 +90,7 @@ function attachNicks(room, groups) {
   }));
 }
 
-// ─── Scoring (§9) ─────────────────────────────────────────────────────────────
+// ─── Scoring ──────────────────────────────────────────────────────────────────
 
 function computeScores(room, adjMap, perPlayerDeduped, groups) {
   const groupInfo = new Map(
@@ -155,7 +153,8 @@ const httpServer = http.createServer(app);
 const io = new Server(httpServer);
 
 app.use(express.static(path.join(__dirname, 'public')));
-app.get('/host', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'host.html')));
+// Keep /host route working for direct access, serves unified page
+app.get('/host', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 const rooms = new Map();
 
@@ -188,7 +187,7 @@ function emitToRoom(room, event, data) {
   io.to(`room:${room.code}`).emit(event, data);
 }
 
-// ─── Gulag helpers ─────────────────────────────────────────────────────────────
+// ─── Gulag helpers ────────────────────────────────────────────────────────────
 
 function hostSock(room) {
   return room.hostSocketId ? io.sockets.sockets.get(room.hostSocketId) : null;
@@ -304,7 +303,7 @@ function maybeProposeGulag(room, roundScores) {
   });
 }
 
-// ─── Duel lifecycle ────────────────────────────────────────────────────────────
+// ─── Duel lifecycle ───────────────────────────────────────────────────────────
 
 function startDuel(room, p1Id, p2Id) {
   const p1 = room.players.get(p1Id), p2 = room.players.get(p2Id);
@@ -317,10 +316,8 @@ function startDuel(room, p1Id, p2Id) {
     answers: new Map(), scored: false, groupResult: null, result: null,
   };
 
-  emitToPlayers(room, [p1Id], 'duel:started',
-    { category, endsAt, opponent: p2.nickname });
-  emitToPlayers(room, [p2Id], 'duel:started',
-    { category, endsAt, opponent: p1.nickname });
+  emitToPlayers(room, [p1Id], 'duel:started', { category, endsAt, opponent: p2.nickname });
+  emitToPlayers(room, [p2Id], 'duel:started', { category, endsAt, opponent: p1.nickname });
   emitToDuelAudience(room, 'duel:spectate_start', {
     category, endsAt,
     players: [{ playerId: p1Id, nickname: p1.nickname }, { playerId: p2Id, nickname: p2.nickname }],
@@ -410,7 +407,7 @@ function endRound(room) {
   emitToSpectators(room, 'spectate:round_end', {});
 }
 
-// ─── GC ──────────────────────────────────────────────────────────────────────
+// ─── GC ───────────────────────────────────────────────────────────────────────
 
 setInterval(() => {
   const now = Date.now();
@@ -696,30 +693,6 @@ io.on('connection', (socket) => {
     cb?.({ ok: true });
   });
 
-  socket.on('player:submit_answer', ({ code, answer }) => {
-    const room = rooms.get(code);
-    if (!room) return;
-    const playerId = socket.data.playerId;
-    const player = playerId ? room.players.get(playerId) : null;
-    if (!player) return;
-    const t = (answer || '').trim();
-    if (!t) return;
-
-    if (room.phase === 'round' && player.status === 'active') {
-      if (Date.now() > room.round.endsAt) return;
-      if (!room.round.answers.has(playerId)) room.round.answers.set(playerId, []);
-      room.round.answers.get(playerId).push(t);
-      socket.emit('player:answer_received', { answer: t });
-      emitToSpectators(room, 'spectate:answer', { playerId, nickname: player.nickname, answer: t });
-    } else if (room.phase === 'duel' && room.duel.players.includes(playerId)) {
-      if (Date.now() > room.duel.endsAt) return;
-      if (!room.duel.answers.has(playerId)) room.duel.answers.set(playerId, []);
-      room.duel.answers.get(playerId).push(t);
-      socket.emit('player:answer_received', { answer: t });
-      emitToDuelAudience(room, 'duel:spectate_answer', { playerId, nickname: player.nickname, answer: t });
-    }
-  });
-
   socket.on('player:join', ({ code, nickname, playerId }, cb) => {
     const upperCode = (code || '').toUpperCase();
     const room = rooms.get(upperCode);
@@ -781,6 +754,43 @@ io.on('connection', (socket) => {
     broadcastPlayerList(room);
 
     cb({ ok: true, playerId: newId, nickname: nick, status: 'active', phase: room.phase, roundInfo: null, leaderboard: null });
+  });
+
+  socket.on('player:leave', ({ code, playerId }) => {
+    const room = rooms.get((code || '').toUpperCase());
+    if (!room) return;
+    if (room.players.has(playerId)) {
+      room.players.delete(playerId);
+      room.scores.delete(playerId);
+      if (room.gulagWaiting === playerId) room.gulagWaiting = null;
+      if (room.pendingGulag === playerId) room.pendingGulag = null;
+      socket.leave(`room:${code}`);
+      broadcastPlayerList(room);
+    }
+  });
+
+  socket.on('player:submit_answer', ({ code, answer }) => {
+    const room = rooms.get(code);
+    if (!room) return;
+    const playerId = socket.data.playerId;
+    const player = playerId ? room.players.get(playerId) : null;
+    if (!player) return;
+    const t = (answer || '').trim();
+    if (!t) return;
+
+    if (room.phase === 'round' && player.status === 'active') {
+      if (Date.now() > room.round.endsAt) return;
+      if (!room.round.answers.has(playerId)) room.round.answers.set(playerId, []);
+      room.round.answers.get(playerId).push(t);
+      socket.emit('player:answer_received', { answer: t });
+      emitToSpectators(room, 'spectate:answer', { playerId, nickname: player.nickname, answer: t });
+    } else if (room.phase === 'duel' && room.duel.players.includes(playerId)) {
+      if (Date.now() > room.duel.endsAt) return;
+      if (!room.duel.answers.has(playerId)) room.duel.answers.set(playerId, []);
+      room.duel.answers.get(playerId).push(t);
+      socket.emit('player:answer_received', { answer: t });
+      emitToDuelAudience(room, 'duel:spectate_answer', { playerId, nickname: player.nickname, answer: t });
+    }
   });
 
   socket.on('disconnect', () => {

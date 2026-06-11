@@ -456,6 +456,17 @@
       document.head.appendChild(s);
     }
   </script>
+  <script>
+    // Shared socket instance used by both host.js and player.js
+    const socket = io();
+
+    // Shared utility — both scripts use this
+    function showScreen(id) {
+      document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+      const el = document.getElementById('screen-' + id);
+      if (el) el.classList.add('active');
+    }
+  </script>
   <script src="/host.js"></script>
   <script src="/player.js"></script>
 </body>

@@ -1,6 +1,12 @@
 'use strict';
 
-const socket = io();
+// ─── host.js only runs when the host elements exist ───────────────────────────
+// Both host.js and player.js are loaded on the same page.
+// Each script guards itself by checking for its own root element.
+if (!document.getElementById('screen-console')) {
+  // This file should not self-execute if console screen is absent
+  // (safety net — normally it will be present since it's one unified page)
+}
 
 const PRESETS = [
   'فواكه','خضار','دول','مدن سعودية','أسماء أولاد','أسماء بنات',
@@ -69,9 +75,7 @@ const sfx = {
   scored()       { seq([{f:523,d:0.12,at:0},{f:659,d:0.12,at:110},{f:784,d:0.22,at:220}]); },
   tick()         { beep(560, 0.07, 'square', 0.08); },
   urgentTick()   { beep(880, 0.07, 'square', 0.12); },
-  gulagAlert()   {
-    seq([{f:300,d:0.12,at:0},{f:200,d:0.22,at:130}]);
-  },
+  gulagAlert()   { seq([{f:300,d:0.12,at:0},{f:200,d:0.22,at:130}]); },
   duelStart()    {
     seq([
       {f:200,d:0.10,at:0},{f:250,d:0.10,at:100},
@@ -121,15 +125,24 @@ let state = {
   lastTickSec: -1,
 };
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function escapeHtml(str) {
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
+// ─── Screen helpers ───────────────────────────────────────────────────────────
 
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  document.getElementById(`screen-${id}`).classList.add('active');
+  const el = document.getElementById(`screen-${id}`);
+  if (el) el.classList.add('active');
+}
+
+// Go back to the main menu and clear host session
+function hostGoToMenu() {
+  localStorage.removeItem('hostKey');
+  localStorage.removeItem('hostRoomCode');
+  state.hostKey = null;
+  state.roomCode = null;
+  state.prevPlayerCount = 0;
+  clearInterval(state.roundTickInterval);
+  clearInterval(state.duelTickInterval);
+  showScreen('menu');
 }
 
 function showHostPhase(phase) {
@@ -168,7 +181,7 @@ function showHostPhase(phase) {
     case 'round':
       show('panel-room-info');
       show('panel-right');
-      show('panel-round-live');           // ← was missing in public/host.js
+      show('panel-round-live');
       break;
     case 'adjudication':
     case 'duel_adjudication':
@@ -206,10 +219,36 @@ function setConnectionStatus(status) {
                     : status === 'reconnecting' ? 'إعادة الاتصال…' : 'منقطع';
 }
 
+// ─── Main menu → host flow ────────────────────────────────────────────────────
+
+document.getElementById('menu-btn-host')?.addEventListener('click', () => {
+  getCtx();
+  // If already have a valid key stored, try to go straight to console
+  if (state.hostKey) {
+    socket.emit('host:authenticate', { key: state.hostKey }, (res) => {
+      if (res.ok) showMainConsole();
+      else {
+        localStorage.removeItem('hostKey');
+        state.hostKey = null;
+        showScreen('lock');
+      }
+    });
+  } else {
+    showScreen('lock');
+  }
+});
+
+// Back button on lock screen
+document.getElementById('lock-back-btn')?.addEventListener('click', () => {
+  document.getElementById('lock-error').textContent = '';
+  document.getElementById('input-host-key').value = '';
+  showScreen('menu');
+});
+
 // ─── Lock screen ──────────────────────────────────────────────────────────────
 
-document.getElementById('btn-unlock').addEventListener('click', doUnlock);
-document.getElementById('input-host-key').addEventListener('keydown', e => { if (e.key === 'Enter') doUnlock(); });
+document.getElementById('btn-unlock')?.addEventListener('click', doUnlock);
+document.getElementById('input-host-key')?.addEventListener('keydown', e => { if (e.key === 'Enter') doUnlock(); });
 
 function doUnlock() {
   const key = document.getElementById('input-host-key').value;
@@ -219,6 +258,7 @@ function doUnlock() {
     if (res.ok) {
       state.hostKey = key;
       localStorage.setItem('hostKey', key);
+      document.getElementById('input-host-key').value = '';
       showMainConsole();
     } else {
       document.getElementById('lock-error').textContent = res.error || 'مفتاح خاطئ';
@@ -236,32 +276,30 @@ function showMainConsole() {
   else showHostPhase('no-room');
 }
 
-if (state.hostKey) {
+// ─── Auto-restore host session on page load ───────────────────────────────────
+// Runs after socket is available (deferred to end of script via socket.on connect)
+
+function tryAutoRestoreHost() {
+  if (!state.hostKey) return;
   socket.emit('host:authenticate', { key: state.hostKey }, (res) => {
-    if (res.ok) showMainConsole();
-    else {
+    if (res.ok) {
+      // Only auto-restore if no player state is active
+      const playerInGame = localStorage.getItem('playerId') && localStorage.getItem('roomCode');
+      if (!playerInGame) showMainConsole();
+    } else {
       localStorage.removeItem('hostKey');
       state.hostKey = null;
-      showScreen('lock');
     }
   });
-} else {
-  showScreen('lock');
 }
 
 // ─── Logout ───────────────────────────────────────────────────────────────────
 
-document.getElementById('btn-logout').addEventListener('click', () => {
-  localStorage.removeItem('hostKey');
-  localStorage.removeItem('hostRoomCode');
-  state.hostKey = null;
-  state.roomCode = null;
-  showScreen('lock');
-});
+document.getElementById('btn-logout')?.addEventListener('click', hostGoToMenu);
 
 // ─── Create room ──────────────────────────────────────────────────────────────
 
-document.getElementById('btn-create-room').addEventListener('click', () => {
+document.getElementById('btn-create-room')?.addEventListener('click', () => {
   const btn = document.getElementById('btn-create-room');
   btn.disabled = true;
   socket.emit('host:create_room', { key: state.hostKey }, (res) => {
@@ -346,33 +384,24 @@ function setupRoomView(code) {
 }
 
 function generateQR(url) {
-  // Try canvas method first (most reliable)
   const canvas = document.getElementById('qr-canvas');
   const img    = document.getElementById('qr-img');
 
   function tryGenerate() {
     if (typeof QRCode === 'undefined') {
-      console.warn('QRCode not loaded yet, retrying…');
       setTimeout(tryGenerate, 300);
       return;
     }
-    // toCanvas is the most reliable method
     if (canvas && QRCode.toCanvas) {
       QRCode.toCanvas(canvas, url, {
-        width: 180,
-        margin: 1,
+        width: 180, margin: 1,
         color: { dark: '#f59e0b', light: '#1a1a35' },
       }, (err) => {
-        if (err) {
-          console.error('QR canvas error:', err);
-          tryDataURL(url);
-        } else {
-          canvas.style.display = 'block';
-          if (img) img.style.display = 'none';
-          // Style the canvas border
-          canvas.style.border = '4px solid #f59e0b';
-          canvas.style.borderRadius = '8px';
-        }
+        if (err) { tryDataURL(url); return; }
+        canvas.style.display = 'block';
+        canvas.style.border = '4px solid #f59e0b';
+        canvas.style.borderRadius = '8px';
+        if (img) img.style.display = 'none';
       });
     } else {
       tryDataURL(url);
@@ -380,25 +409,21 @@ function generateQR(url) {
   }
 
   function tryDataURL(u) {
-    if (!QRCode.toDataURL) return;
+    if (!QRCode?.toDataURL) return;
     QRCode.toDataURL(u, {
-      width: 180,
-      margin: 1,
+      width: 180, margin: 1,
       color: { dark: '#f59e0b', light: '#1a1a35' },
     }, (err, dataUrl) => {
-      if (err) { console.error('QR dataURL error:', err); return; }
-      if (img) {
-        img.src = dataUrl;
-        img.style.display = 'block';
-        if (canvas) canvas.style.display = 'none';
-      }
+      if (err) return;
+      if (img) { img.src = dataUrl; img.style.display = 'block'; }
+      if (canvas) canvas.style.display = 'none';
     });
   }
 
   tryGenerate();
 }
 
-// ─── Player list (with +/- score adjustment) ──────────────────────────────────
+// ─── Player list ──────────────────────────────────────────────────────────────
 
 function renderPlayerList(players) {
   const list  = document.getElementById('player-list');
@@ -413,10 +438,9 @@ function renderPlayerList(players) {
     return;
   }
 
-  // Preserve scroll position
   const scrollTop = list.scrollTop;
-
   list.innerHTML = '';
+
   players.forEach((p, idx) => {
     const row = document.createElement('div');
     row.className = `player-row${p.connected ? '' : ' offline'}`;
@@ -428,7 +452,6 @@ function renderPlayerList(players) {
     const statusBadge = p.status === 'out'   ? '<span class="status-pill pill-out">خارج</span>'
                       : p.status === 'gulag' ? '<span class="status-pill pill-gulag">⛓️</span>'
                       : '';
-
     const pid = escapeHtml(p.playerId);
     row.innerHTML = `
       <span class="${p.connected ? 'online-dot' : 'offline-dot'}"></span>
@@ -478,6 +501,7 @@ socket.on('room:player_list', renderPlayerList);
 
 function buildPresets() {
   const grid = document.getElementById('preset-grid');
+  if (!grid) return;
   grid.innerHTML = '';
   PRESETS.forEach(cat => {
     const btn = document.createElement('button');
@@ -495,7 +519,7 @@ function selectPreset(cat, btn) {
   setSelectedCategory(cat);
 }
 
-document.getElementById('custom-category').addEventListener('input', e => {
+document.getElementById('custom-category')?.addEventListener('input', e => {
   document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('selected'));
   setSelectedCategory(e.target.value.trim());
 });
@@ -508,7 +532,7 @@ function setSelectedCategory(cat) {
   else     { display.classList.add('hidden'); btn.disabled = true; }
 }
 
-// ─── Live round countdown (host) ──────────────────────────────────────────────
+// ─── Live round countdown ─────────────────────────────────────────────────────
 
 function startHostRoundCountdown(endsAt) {
   clearInterval(state.roundTickInterval);
@@ -520,8 +544,6 @@ function startHostRoundCountdown(endsAt) {
     const rem = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
     el.textContent = rem;
     el.classList.toggle('urgent', rem <= 10);
-
-    // Play tick sounds for the host too, so they know when to watch
     if (rem <= 10 && rem > 0 && rem !== state.lastTickSec) {
       state.lastTickSec = rem;
       rem <= 5 ? sfx.urgentTick() : sfx.tick();
@@ -534,7 +556,7 @@ function startHostRoundCountdown(endsAt) {
 
 // ─── Start round ──────────────────────────────────────────────────────────────
 
-document.getElementById('btn-start-round').addEventListener('click', () => {
+document.getElementById('btn-start-round')?.addEventListener('click', () => {
   if (!state.selectedCategory) return;
   document.getElementById('round-error').textContent = '';
   document.getElementById('btn-start-round').disabled = true;
@@ -566,7 +588,6 @@ function renderAdjudicationPanel(groups, category, roundNumber) {
   document.getElementById('adj-category').textContent = category;
   document.getElementById('adj-round-num').textContent = roundNumber;
 
-  // Auto-detect duplicates: second+ occurrences of the same display label
   const labelOccurrence = {};
   const duplicateKeys = new Set();
   groups.forEach(g => {
@@ -601,7 +622,6 @@ function renderAdjudicationPanel(groups, category, roundNumber) {
       ? `<span class="adj-dup-badge" title="ظهرت نفس الكلمة في صف آخر">مكرّر</span>`
       : '';
 
-    // Unique-answer highlight (only one player gave this)
     const uniqueClass = g.playerCount === 1 ? ' adj-row-unique' : '';
     row.classList.add(...uniqueClass.trim().split(' ').filter(Boolean));
 
@@ -625,16 +645,10 @@ function renderAdjudicationPanel(groups, category, roundNumber) {
       e.target.classList.toggle('invalid', !valid);
       e.target.textContent = valid ? '✓' : '✗';
       row.classList.toggle('rejected', !valid);
-
       if (!valid) {
-        row.classList.remove('shake');
-        void row.offsetWidth;
-        row.classList.add('shake');
+        row.classList.remove('shake'); void row.offsetWidth; row.classList.add('shake');
         sfx.adjReject();
-      } else {
-        sfx.adjAccept();
-      }
-
+      } else { sfx.adjAccept(); }
       updateAdjStats(groups);
     });
 
@@ -660,7 +674,7 @@ function updateAdjStats(groups) {
   `;
 }
 
-document.getElementById('btn-score-round').addEventListener('click', () => {
+document.getElementById('btn-score-round')?.addEventListener('click', () => {
   const decisions = Object.entries(state.adjState).map(([key, valid]) => ({ key, valid }));
   const btn = document.getElementById('btn-score-round');
   btn.disabled = true;
@@ -701,16 +715,13 @@ function renderLeaderboard(leaderboard, roundNumber) {
   });
 }
 
-document.getElementById('btn-new-round').addEventListener('click', () => {
+document.getElementById('btn-new-round')?.addEventListener('click', () => {
   socket.emit('host:new_round', { code: state.roomCode }, (res) => {
-    if (res?.ok) {
-      resetRoundControls();
-      showHostPhase('lobby');
-    }
+    if (res?.ok) { resetRoundControls(); showHostPhase('lobby'); }
   });
 });
 
-document.getElementById('btn-end-game').addEventListener('click', () => {
+document.getElementById('btn-end-game')?.addEventListener('click', () => {
   socket.emit('host:end_game', { code: state.roomCode });
 });
 
@@ -723,7 +734,7 @@ function resetRoundControls() {
   document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('selected'));
 }
 
-// ─── Gulag prompt modal ─────────────────────────────────────────────────────
+// ─── Gulag prompt modal ───────────────────────────────────────────────────────
 
 function showGulagModal(show) {
   document.getElementById('gulag-modal').classList.toggle('hidden', !show);
@@ -742,18 +753,18 @@ socket.on('gulag:prompt', (data) => {
   sfx.gulagAlert();
 });
 
-document.getElementById('btn-gulag-yes').addEventListener('click', () => {
+document.getElementById('btn-gulag-yes')?.addEventListener('click', () => {
   socket.emit('host:gulag_decision', { code: state.roomCode, accept: true });
   showGulagModal(false);
   state.gulagPending = null;
 });
-document.getElementById('btn-gulag-no').addEventListener('click', () => {
+document.getElementById('btn-gulag-no')?.addEventListener('click', () => {
   socket.emit('host:gulag_decision', { code: state.roomCode, accept: false });
   showGulagModal(false);
   state.gulagPending = null;
 });
 
-// ─── Gulag duel (host: spectate, adjudicate, resolve) ───────────────────────
+// ─── Duel ─────────────────────────────────────────────────────────────────────
 
 function buildHostDuelBoxes(players) {
   const wrap = document.getElementById('host-duel-boxes');
@@ -813,16 +824,13 @@ function renderDuelResult({ winnerNick, loserNick, champion }) {
 socket.on('duel:spectate_start', ({ category, endsAt, players }) => {
   enterHostDuel(category, endsAt, players);
 });
-
 socket.on('duel:spectate_answer', ({ playerId, answer }) => addHostDuelChip(playerId, answer));
-
 socket.on('duel:tick', ({ remaining }) => {
   if (state.phase !== 'duel') return;
   const el = document.getElementById('host-duel-countdown');
   el.textContent = remaining;
   el.classList.toggle('urgent', remaining <= 10);
 });
-
 socket.on('duel:ended', ({ groups, category }) => {
   clearInterval(state.duelTickInterval);
   sfx.timeUp();
@@ -830,22 +838,18 @@ socket.on('duel:ended', ({ groups, category }) => {
   renderAdjudicationPanel(groups, `${category} ⚔️`, '—');
   showHostPhase('duel_adjudication');
 });
-
 socket.on('duel:result', (data) => {
   renderDuelResult(data);
   showHostPhase('duel_result');
   sfx.scored();
 });
 
-document.getElementById('btn-duel-continue').addEventListener('click', () => {
+document.getElementById('btn-duel-continue')?.addEventListener('click', () => {
   const btn = document.getElementById('btn-duel-continue');
   btn.disabled = true;
   socket.emit('host:resume_lobby', { code: state.roomCode }, (res) => {
     btn.disabled = false;
-    if (res?.ok && !res.finished) {
-      resetRoundControls();
-      showHostPhase('lobby');
-    }
+    if (res?.ok && !res.finished) { resetRoundControls(); showHostPhase('lobby'); }
   });
 });
 
@@ -876,7 +880,7 @@ function renderFinal(leaderboard) {
   });
 }
 
-document.getElementById('btn-new-game').addEventListener('click', () => {
+document.getElementById('btn-new-game')?.addEventListener('click', () => {
   localStorage.removeItem('hostRoomCode');
   state.roomCode = null;
   state.prevPlayerCount = 0;
@@ -887,10 +891,11 @@ document.getElementById('btn-new-game').addEventListener('click', () => {
 
 function renderPodium(containerId, leaderboard) {
   const wrap = document.getElementById(containerId);
+  if (!wrap) return;
   wrap.innerHTML = '';
-  const top3 = leaderboard.slice(0, 3);
+  const top3    = leaderboard.slice(0, 3);
   if (!top3.length) return;
-  const slots  = [top3[1], top3[0], top3[2]];
+  const slots   = [top3[1], top3[0], top3[2]];
   const classes = ['second','first','third'];
   const medals  = ['🥈','🥇','🥉'];
   const labels  = ['2','1','3'];
@@ -934,6 +939,12 @@ function launchConfetti() {
   }
 }
 
+// ─── Utils ────────────────────────────────────────────────────────────────────
+
+function escapeHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 // ─── Connection ───────────────────────────────────────────────────────────────
 
 socket.on('disconnect', () => setConnectionStatus('reconnecting'));
@@ -941,4 +952,5 @@ socket.on('connect_error', () => setConnectionStatus('disconnected'));
 socket.on('connect', () => {
   setConnectionStatus('connected');
   if (state.hostKey && state.roomCode) tryRejoinRoom();
+  else if (state.hostKey) tryAutoRestoreHost();
 });

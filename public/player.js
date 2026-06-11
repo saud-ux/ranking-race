@@ -1,5 +1,4 @@
-'use strict';
-
+(function() {
 // ─── Audio engine ─────────────────────────────────────────────────────────────
 
 let audioCtx = null;
@@ -119,11 +118,6 @@ let pState = {
 
 // ─── Screen helpers ───────────────────────────────────────────────────────────
 
-function showScreen(id) {
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  const el = document.getElementById(`screen-${id}`);
-  if (el) el.classList.add('active');
-}
 
 function showGameState(name) {
   ['waiting','round','ended','results','final',
@@ -778,3 +772,4 @@ function launchConfetti() {
 function escapeHtml(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+})();

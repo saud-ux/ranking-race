@@ -107,10 +107,10 @@ html, body {
 
 .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0; }
 .status-dot.connected    { background: var(--success); }
-.status-dot.reconnecting { background: var(--accent); animation: pulse 1s infinite; }
+.status-dot.reconnecting { background: var(--accent); animation: pulse 1.5s infinite; }
 .status-dot.disconnected { background: var(--danger); }
 
-@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
 /* ─── Player: top bar ────────────────────────────────────────────────────── */
 
@@ -143,8 +143,10 @@ html, body {
 .countdown {
   font-size: 4.5rem; font-weight: 900; color: var(--text);
   line-height: 1; margin: 8px 0; font-variant-numeric: tabular-nums;
-  transition: color 0.2s;
+  transition: color 0.3s;
 }
+/* urgent = color change only, no pulse animation */
+.countdown.urgent { color: var(--danger); }
 
 .answer-input-wrap { display: flex; gap: 8px; margin-top: 16px; }
 .answer-input-wrap .input { flex: 1; min-width: 0; }
@@ -160,7 +162,9 @@ html, body {
   border-radius: 20px; padding: 6px 14px; font-size: 0.9rem; font-weight: 600;
   flex-shrink: 0;
 }
-@keyframes chip-in { from { transform: scale(0.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes chip-in { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+/* chip-new: subtle fade-in only, no green flash */
+.chip-new { animation: chip-in 0.18s ease; }
 
 .round-ended-msg { font-size: 1.4rem; font-weight: 700; color: var(--success); margin-top: 20px; }
 
@@ -212,64 +216,49 @@ html, body {
   to { transform: translateY(110vh) rotate(720deg); opacity: 0; }
 }
 
-@keyframes chip-flash {
-  0%   { background: var(--success); border-color: var(--success); color: #fff; }
-  100% { background: var(--surface-2); border-color: var(--border); color: var(--text); }
-}
-.chip-new { animation: chip-in 0.2s ease, chip-flash 0.6s ease 0.05s; }
-
-@keyframes countdown-pulse {
-  0%, 100% { transform: scale(1); }
-  50%       { transform: scale(1.18); }
-}
-.countdown.urgent { animation: countdown-pulse 0.9s ease-in-out infinite; color: var(--danger); }
-
-@keyframes round-flash {
-  0%   { background: var(--surface); }
-  30%  { background: rgba(16,185,129,0.22); }
-  100% { background: var(--surface); }
-}
-.round-start-flash { animation: round-flash 0.8s ease forwards; }
-
+/* leaderboard rows: simple fade-in, no stagger delay */
 @keyframes lb-row-in {
-  from { opacity: 0; transform: translateX(20px); }
-  to   { opacity: 1; transform: translateX(0); }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
-.lb-row-enter { animation: lb-row-in 0.3s ease var(--row-delay, 0ms) both; }
+.lb-row-enter { animation: lb-row-in 0.2s ease both; }
 
+/* score delta: simple fade-in */
 @keyframes delta-pop {
-  0%   { transform: scale(0.4); opacity: 0; }
-  60%  { transform: scale(1.3); }
-  100% { transform: scale(1);   opacity: 1; }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
-.delta-pop { animation: delta-pop 0.45s ease both; }
+.delta-pop { animation: delta-pop 0.3s ease both; }
 
+/* adjudication row shake on reject — kept, it's useful feedback */
 @keyframes row-shake {
   0%, 100% { transform: translateX(0); }
-  25%       { transform: translateX(-6px); }
-  75%       { transform: translateX(6px); }
+  25%       { transform: translateX(-5px); }
+  75%       { transform: translateX(5px); }
 }
-.shake { animation: row-shake 0.3s ease; }
+.shake { animation: row-shake 0.25s ease; }
+
+/* score flash in player list */
+@keyframes score-up {
+  0%   { color: var(--success); }
+  100% { color: var(--accent); }
+}
+@keyframes score-down {
+  0%   { color: var(--danger); }
+  100% { color: var(--accent); }
+}
+.score-flash-up   { animation: score-up   0.4s ease forwards; }
+.score-flash-down { animation: score-down 0.4s ease forwards; }
 
 .rank-1-row { background: rgba(245,158,11,0.10); }
 .rank-1-row .rank-cell { color: #FFD700; font-size: 1.3rem; }
 
+/* waiting state — very subtle, slow */
 @keyframes waiting-pulse {
   0%, 100% { opacity: 1; }
-  50%       { opacity: 0.5; }
+  50%       { opacity: 0.6; }
 }
-.lobby-message { animation: waiting-pulse 2s ease-in-out infinite; }
-
-@keyframes score-up {
-  0%   { color: var(--success); transform: scale(1.4); }
-  100% { color: var(--accent);  transform: scale(1); }
-}
-@keyframes score-down {
-  0%   { color: var(--danger); transform: scale(1.4); }
-  100% { color: var(--accent); transform: scale(1); }
-}
-.score-flash-up   { animation: score-up   0.55s ease forwards; }
-.score-flash-down { animation: score-down 0.55s ease forwards; }
+.lobby-message { animation: waiting-pulse 3s ease-in-out infinite; }
 
 /* ─── Mute button ────────────────────────────────────────────────────────── */
 
@@ -414,10 +403,10 @@ html, body {
 
 /* ─── Host: live round panel ─────────────────────────────────────────────── */
 
+/* border pulse removed */
 .round-live-panel {
   grid-column: 1 / -1;
   border-color: var(--accent);
-  box-shadow: 0 0 20px rgba(245,158,11,0.12);
 }
 
 .round-live-head {
@@ -428,12 +417,6 @@ html, body {
   font-size: 2rem; font-weight: 900; color: var(--accent);
   margin-top: 8px; line-height: 1.2;
 }
-
-@keyframes live-border-pulse {
-  0%, 100% { box-shadow: 0 0 18px rgba(245,158,11,0.12); }
-  50%       { box-shadow: 0 0 32px rgba(245,158,11,0.30); }
-}
-.round-live-panel { animation: live-border-pulse 2s ease-in-out infinite; }
 
 /* ─── Host: adjudication panel ───────────────────────────────────────────── */
 
@@ -571,16 +554,15 @@ html, body {
   background: rgba(5,5,18,0.80); backdrop-filter: blur(4px);
   padding: 16px;
 }
-@keyframes modal-fade { from { opacity: 0; } to { opacity: 1; } }
 
 .modal-card {
   background: var(--surface); border: 1px solid var(--danger);
   border-radius: var(--radius); padding: 28px 24px; text-align: center;
   max-width: 420px; width: 100%;
   box-shadow: 0 0 48px rgba(239,68,68,0.28);
-  animation: modal-pop 0.25s cubic-bezier(0.2,1.4,0.5,1);
+  animation: modal-pop 0.2s cubic-bezier(0.2,1.2,0.5,1);
 }
-@keyframes modal-pop { from { transform: scale(0.85); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes modal-pop { from { transform: scale(0.92); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 
 .modal-emoji   { font-size: 2.6rem; margin-bottom: 8px; }
 .modal-title   { font-size: 1.3rem; font-weight: 900; color: var(--danger); margin-bottom: 10px; }
@@ -625,9 +607,9 @@ html, body {
   font-size: 1.6rem; font-weight: 900; color: var(--accent);
   background: var(--surface-2); border-radius: var(--radius-sm);
   padding: 4px 16px; min-width: 56px; text-align: center;
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: tabular-nums; transition: color 0.3s;
 }
-.duel-countdown-badge.urgent { color: var(--danger); animation: countdown-pulse 0.9s ease-in-out infinite; }
+.duel-countdown-badge.urgent { color: var(--danger); }
 
 .duel-boxes { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; }
 .duel-box {
@@ -674,22 +656,12 @@ html, body {
 }
 
 .menu-logo-wrap { text-align: center; }
-
-.menu-flag {
-  font-size: 4rem; line-height: 1; margin-bottom: 12px;
-  animation: menu-flag-wave 3s ease-in-out infinite;
-}
-
-@keyframes menu-flag-wave {
-  0%, 100% { transform: rotate(-4deg) scale(1); }
-  50%       { transform: rotate(4deg)  scale(1.06); }
-}
+.menu-flag { font-size: 4rem; line-height: 1; margin-bottom: 12px; }
 
 .menu-title {
   font-size: 2.8rem; font-weight: 900; color: var(--accent);
   line-height: 1.1; margin-bottom: 8px; letter-spacing: -0.5px;
 }
-
 @media (max-width: 400px) { .menu-title { font-size: 2.1rem; } }
 
 .menu-tagline { color: var(--text-muted); font-size: 1rem; font-weight: 600; }

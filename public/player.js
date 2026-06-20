@@ -15,7 +15,7 @@ function getCtx() {
 
 document.addEventListener('pointerdown', () => getCtx(), { once: false, passive: true });
 
-function beep(freq, dur, type = 'sine', vol = 0.22) {
+function beep(freq, dur, type = 'sine', vol = 0.18) {
   if (muted) return;
   const ctx = getCtx();
   if (!ctx) return;
@@ -32,10 +32,10 @@ function beep(freq, dur, type = 'sine', vol = 0.22) {
 }
 
 function seq(notes) {
-  notes.forEach(n => setTimeout(() => beep(n.f, n.d, n.t || 'sine', n.v || 0.22), n.at || 0));
+  notes.forEach(n => setTimeout(() => beep(n.f, n.d, n.t || 'sine', n.v || 0.18), n.at || 0));
 }
 
-function sweep(f1, f2, dur, type = 'sawtooth', vol = 0.25) {
+function sweep(f1, f2, dur, type = 'sawtooth', vol = 0.20) {
   if (muted) return;
   const ctx = getCtx();
   if (!ctx) return;
@@ -52,34 +52,30 @@ function sweep(f1, f2, dur, type = 'sawtooth', vol = 0.25) {
   osc.stop(ctx.currentTime + dur);
 }
 
+// Kept: roundStart, timeUp, duelStart, duelWin, duelLose, fanfare
+// Removed: submit beep, tick/urgentTick, goodScore/badScore, gulagEnter
 const sfx = {
-  submit()      { beep(900, 0.08, 'sine', 0.16); },
-  tick()        { beep(560, 0.07, 'square', 0.10); },
-  urgentTick()  { beep(880, 0.07, 'square', 0.14); },
-  timeUp()      { sweep(480, 90, 0.75, 'sawtooth', 0.28); },
+  timeUp()      { sweep(480, 90, 0.65, 'sawtooth', 0.22); },
   roundStart()  { seq([{f:400,d:0.09,at:0},{f:600,d:0.09,at:80},{f:900,d:0.15,at:160}]); },
-  goodScore()   { seq([{f:523,d:0.12,at:0},{f:659,d:0.12,at:110},{f:784,d:0.22,at:220}]); },
-  badScore()    { sweep(250, 120, 0.35, 'square', 0.18); },
-  gulagEnter()  { seq([{f:300,d:0.18,at:0},{f:220,d:0.18,at:200},{f:150,d:0.35,at:420}]); },
   duelStart()   {
     seq([
       {f:200,d:0.10,at:0},{f:250,d:0.10,at:100},
-      {f:300,d:0.10,at:200},{f:450,d:0.25,at:320},
+      {f:300,d:0.10,at:200},{f:450,d:0.22,at:320},
     ]);
   },
   duelWin()     {
     seq([
       {f:523,d:0.12,at:0},{f:659,d:0.12,at:110},
-      {f:784,d:0.18,at:220},{f:1047,d:0.35,at:380},
+      {f:784,d:0.18,at:220},{f:1047,d:0.30,at:380},
     ]);
   },
-  duelLose()    { sweep(300, 80, 0.6, 'sawtooth', 0.22); },
+  duelLose()    { sweep(300, 80, 0.5, 'sawtooth', 0.18); },
   fanfare()     {
     seq([
       {f:523,d:0.13,at:0},   {f:523,d:0.13,at:140},
       {f:523,d:0.13,at:280}, {f:698,d:0.35,at:420},
       {f:659,d:0.35,at:780}, {f:587,d:0.13,at:1100},
-      {f:784,d:0.55,at:1240},
+      {f:784,d:0.50,at:1240},
     ]);
   },
 };
@@ -117,7 +113,6 @@ let pState = {
 };
 
 // ─── Screen helpers ───────────────────────────────────────────────────────────
-
 
 function showGameState(name) {
   ['waiting','round','ended','results','final',
@@ -168,34 +163,25 @@ function hideLeavModal() {
   document.getElementById('leave-modal')?.classList.add('hidden');
 }
 
-// ─── Leave button (in-game top bar) ──────────────────────────────────────────
-
 document.getElementById('player-leave-btn')?.addEventListener('click', showLeaveModal);
 document.getElementById('leave-cancel-btn')?.addEventListener('click', hideLeavModal);
 document.getElementById('leave-confirm-btn')?.addEventListener('click', () => {
-  // Tell server to remove us (reuse kick mechanism via a leave event — handled below)
   if (pState.playerId && pState.roomCode) {
     socket.emit('player:leave', { code: pState.roomCode, playerId: pState.playerId });
   }
   playerGoToMenu();
 });
 
-// Final screen menu button
 document.getElementById('player-final-menu-btn')?.addEventListener('click', playerGoToMenu);
-
-// ─── Join form: back button ───────────────────────────────────────────────────
 
 document.getElementById('join-back-btn')?.addEventListener('click', () => {
   showJoinError('');
   showScreen('menu');
 });
 
-// ─── Main menu → player flow ──────────────────────────────────────────────────
-
 document.getElementById('menu-btn-join')?.addEventListener('click', () => {
   getCtx();
   showScreen('join');
-  // Pre-fill room code from URL if present
   const params = new URLSearchParams(window.location.search);
   const roomFromUrl = params.get('room');
   if (roomFromUrl) document.getElementById('input-room-code').value = roomFromUrl.toUpperCase();
@@ -255,7 +241,6 @@ function attemptJoin(code, nickname, playerId) {
   const params = new URLSearchParams(window.location.search);
   const roomFromUrl = params.get('room');
 
-  // If URL has a room code, go straight to join form
   if (roomFromUrl) {
     document.getElementById('input-room-code').value = roomFromUrl.toUpperCase();
     showScreen('join');
@@ -263,13 +248,11 @@ function attemptJoin(code, nickname, playerId) {
     return;
   }
 
-  // If stored session, try to reconnect
   if (pState.playerId && pState.roomCode) {
     attemptJoin(pState.roomCode, pState.nickname, pState.playerId);
     return;
   }
 
-  // Otherwise show main menu (host.js may override this if hostKey is set)
   showScreen('menu');
 })();
 
@@ -296,7 +279,7 @@ function doJoin() {
   attemptJoin(code, nickname, null);
 }
 
-// ─── Round: enter ─────────────────────────────────────────────────────────────
+// ─── Round ────────────────────────────────────────────────────────────────────
 
 function enterRound(category, endsAt, existingAnswers) {
   pState.phase      = 'round';
@@ -315,19 +298,9 @@ function enterRound(category, endsAt, existingAnswers) {
   pState.myAnswers.forEach(a => addChip(a, false));
 
   showGameState('round');
-
-  const roundCard = document.querySelector('#state-round .card');
-  if (roundCard) {
-    roundCard.classList.remove('round-start-flash');
-    void roundCard.offsetWidth;
-    roundCard.classList.add('round-start-flash');
-  }
-
   startCountdown(endsAt);
   input.focus();
 }
-
-// ─── Countdown ────────────────────────────────────────────────────────────────
 
 function startCountdown(endsAt) {
   clearInterval(pState.tickInterval);
@@ -336,19 +309,12 @@ function startCountdown(endsAt) {
   function tick() {
     const rem = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
     el.textContent = rem;
-    const urgent = rem <= 10 && rem > 0;
-    el.classList.toggle('urgent', urgent || rem === 0);
-    if (urgent && rem !== pState.lastTickSec) {
-      pState.lastTickSec = rem;
-      rem <= 5 ? sfx.urgentTick() : sfx.tick();
-    }
+    el.classList.toggle('urgent', rem <= 10 && rem > 0);
     if (rem <= 0) clearInterval(pState.tickInterval);
   }
   tick();
   pState.tickInterval = setInterval(tick, 250);
 }
-
-// ─── Answer submission ────────────────────────────────────────────────────────
 
 document.getElementById('btn-submit-answer')?.addEventListener('click', submitAnswer);
 document.getElementById('answer-input')?.addEventListener('keydown', e => {
@@ -371,7 +337,7 @@ socket.on('player:answer_received', ({ answer }) => {
     ? document.getElementById('duel-chips')
     : document.getElementById('chips-area');
   prependChip(area, answer, true);
-  sfx.submit();
+  // no submit sound
 });
 
 function prependChip(container, text, animate = true) {
@@ -386,8 +352,6 @@ function addChip(text, animate = true) {
   prependChip(document.getElementById('chips-area'), text, animate);
 }
 
-// ─── Round events ─────────────────────────────────────────────────────────────
-
 socket.on('round:started', ({ category, endsAt }) => {
   if (pState.status !== 'active') return;
   pState.myAnswers = [];
@@ -401,10 +365,7 @@ socket.on('round:tick', ({ remaining }) => {
   if (!el) return;
   el.textContent = remaining;
   el.classList.toggle('urgent', remaining <= 10 && remaining > 0);
-  if (remaining <= 10 && remaining > 0 && remaining !== pState.lastTickSec) {
-    pState.lastTickSec = remaining;
-    remaining <= 5 ? sfx.urgentTick() : sfx.tick();
-  }
+  // no tick sounds
 });
 
 socket.on('round:time_up', () => {
@@ -430,7 +391,7 @@ socket.on('round:reset', () => {
 socket.on('gulag:entered', () => {
   pState.status = 'gulag';
   clearInterval(pState.tickInterval);
-  sfx.gulagEnter();
+  // no gulag sound
   showGameState('gulagWait');
 });
 
@@ -453,13 +414,6 @@ function enterDuel(category, endsAt, opponent, existingAnswers) {
 
   showGameState('duel');
   startDuelCountdown(endsAt);
-
-  const duelCard = document.querySelector('#state-duel .duel-card');
-  if (duelCard) {
-    duelCard.classList.remove('round-start-flash');
-    void duelCard.offsetWidth;
-    duelCard.classList.add('round-start-flash');
-  }
   input.focus();
 }
 
@@ -477,10 +431,6 @@ function startDuelCountdown(endsAt) {
     const rem = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
     el.textContent = rem;
     el.classList.toggle('urgent', rem <= 10);
-    if (rem <= 10 && rem > 0 && rem !== pState.lastTickSec) {
-      pState.lastTickSec = rem;
-      rem <= 5 ? sfx.urgentTick() : sfx.tick();
-    }
     if (rem <= 0) clearInterval(pState.tickInterval);
   }
   tick();
@@ -626,13 +576,6 @@ socket.on('round:results', ({ leaderboard, roundNumber }) => {
   pState.phase = 'results';
   renderLeaderboard(leaderboard, roundNumber);
   showGameState('results');
-  const mine = leaderboard.find(e => e.playerId === pState.playerId);
-  if (mine) {
-    setTimeout(() => {
-      if (mine.roundScore > 0)      sfx.goodScore();
-      else if (mine.roundScore < 0) sfx.badScore();
-    }, 500);
-  }
 });
 
 function renderLeaderboard(leaderboard, roundNumber) {
@@ -645,14 +588,13 @@ function renderLeaderboard(leaderboard, roundNumber) {
     if (isMe)         tr.className = 'my-row lb-row-enter';
     else if (idx===0) tr.className = 'rank-1-row lb-row-enter';
     else              tr.className = 'lb-row-enter';
-    tr.style.setProperty('--row-delay', `${idx * 70}ms`);
     const sign  = entry.roundScore > 0 ? '+' : '';
     const cls   = entry.roundScore > 0 ? 'delta-pos' : entry.roundScore < 0 ? 'delta-neg' : 'delta-zero';
     const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '';
     tr.innerHTML = `
       <td class="rank-cell">${medal || entry.rank}</td>
       <td class="name-cell">${escapeHtml(entry.nickname)}${isMe ? ' <span class="you-badge">(أنت)</span>' : ''}</td>
-      <td class="delta-cell ${cls} delta-pop" style="animation-delay:${idx*70+300}ms">${sign}${entry.roundScore}</td>
+      <td class="delta-cell ${cls} delta-pop">${sign}${entry.roundScore}</td>
       <td class="score-cell">${entry.totalScore}</td>
     `;
     tbody.appendChild(tr);
@@ -677,7 +619,6 @@ function renderFinal(leaderboard) {
     const isMe = entry.playerId === pState.playerId;
     const tr   = document.createElement('tr');
     tr.className = [isMe ? 'my-row' : '', idx === 0 ? 'rank-1-row' : '', 'lb-row-enter'].filter(Boolean).join(' ');
-    tr.style.setProperty('--row-delay', `${idx * 60}ms`);
     const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '';
     tr.innerHTML = `
       <td class="rank-cell">${medal || entry.rank}</td>
@@ -745,9 +686,9 @@ socket.on('connect', () => {
 
 function launchConfetti() {
   const colors = ['#f59e0b','#10b981','#7c3aed','#ef4444','#3b82f6','#f97316','#ec4899'];
-  for (let i = 0; i < 90; i++) {
+  for (let i = 0; i < 70; i++) {
     const el   = document.createElement('div');
-    const size = Math.random() * 10 + 5;
+    const size = Math.random() * 8 + 5;
     const isRect = Math.random() > 0.5;
     el.style.cssText = [
       `position:fixed`,

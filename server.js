@@ -158,6 +158,10 @@ app.get('/host', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'ind
 
 const rooms = new Map();
 
+function getRoom(code) {
+  return rooms.get((code || '').toUpperCase());
+}
+
 function generateRoomCode() {
   let code;
   do {
@@ -464,7 +468,7 @@ io.on('connection', (socket) => {
 
   socket.on('host:rejoin_room', ({ key, code }, cb) => {
     if (key !== HOST_KEY) return cb({ ok: false, error: 'غير مصرح' });
-    const room = rooms.get(code);
+    const room = getRoom(code);
     if (!room) return cb({ ok: false, error: 'الغرفة غير موجودة' });
     room.hostSocketId = socket.id;
     room.hostLastSeenAt = Date.now();
@@ -520,7 +524,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('host:kick', ({ code, playerId }) => {
-    const room = rooms.get(code);
+    const room = getRoom(code);
     if (!room || room.hostSocketId !== socket.id) return;
     const player = room.players.get(playerId);
     if (!player) return;
@@ -535,7 +539,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('host:adjust_score', ({ code, playerId, delta }, cb) => {
-    const room = rooms.get(code);
+    const room = getRoom(code);
     if (!room || room.hostSocketId !== socket.id) return cb?.({ ok: false });
     if (!room.players.has(playerId)) return cb?.({ ok: false, error: 'لاعب غير موجود' });
     const d = Number(delta);
@@ -558,7 +562,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('host:start_round', ({ code, category }, cb) => {
-    const room = rooms.get(code);
+    const room = getRoom(code);
     if (!room || room.hostSocketId !== socket.id) return cb?.({ ok: false });
     if (room.phase !== 'lobby') return cb?.({ ok: false, error: 'الغرفة ليست في وضع الانتظار' });
 
@@ -583,7 +587,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('host:score_round', ({ code, decisions }, cb) => {
-    const room = rooms.get(code);
+    const room = getRoom(code);
     if (!room || room.hostSocketId !== socket.id) return cb?.({ ok: false });
     if (room.phase !== 'adjudication') return cb?.({ ok: false, error: 'ليس وقت الاحتساب' });
     if (room.round.scored) return cb?.({ ok: true, alreadyScored: true });
@@ -603,7 +607,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('host:gulag_decision', ({ code, accept }, cb) => {
-    const room = rooms.get(code);
+    const room = getRoom(code);
     if (!room || room.hostSocketId !== socket.id) return cb?.({ ok: false });
     const targetId = room.pendingGulag;
     room.pendingGulag = null;
@@ -629,7 +633,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('host:score_duel', ({ code, decisions }, cb) => {
-    const room = rooms.get(code);
+    const room = getRoom(code);
     if (!room || room.hostSocketId !== socket.id) return cb?.({ ok: false });
     if (room.phase !== 'duel_adjudication') return cb?.({ ok: false, error: 'ليس وقت الاحتساب' });
     if (room.duel.scored) return cb?.({ ok: true, alreadyScored: true });
@@ -657,7 +661,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('host:resume_lobby', ({ code }, cb) => {
-    const room = rooms.get(code);
+    const room = getRoom(code);
     if (!room || room.hostSocketId !== socket.id) return cb?.({ ok: false });
     if (room.phase !== 'duel_result') return cb?.({ ok: false });
     room.duel = null;
@@ -675,7 +679,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('host:new_round', ({ code }, cb) => {
-    const room = rooms.get(code);
+    const room = getRoom(code);
     if (!room || room.hostSocketId !== socket.id) return cb?.({ ok: false });
     if (room.phase !== 'results') return cb?.({ ok: false });
     room.phase = 'lobby';
@@ -685,7 +689,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('host:end_game', ({ code }, cb) => {
-    const room = rooms.get(code);
+    const room = getRoom(code);
     if (!room || room.hostSocketId !== socket.id) return cb?.({ ok: false });
     room.phase = 'finished';
     const leaderboard = buildLeaderboard(room, new Map());
@@ -695,7 +699,7 @@ io.on('connection', (socket) => {
 
   socket.on('player:join', ({ code, nickname, playerId }, cb) => {
     const upperCode = (code || '').toUpperCase();
-    const room = rooms.get(upperCode);
+    const room = getRoom(code);
     if (!room) return cb({ ok: false, error: 'الغرفة غير موجودة' });
 
     if (playerId && room.players.has(playerId)) {
@@ -757,7 +761,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('player:leave', ({ code, playerId }) => {
-    const room = rooms.get((code || '').toUpperCase());
+    const room = getRoom(code);
     if (!room) return;
     if (room.players.has(playerId)) {
       room.players.delete(playerId);
@@ -770,7 +774,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('player:submit_answer', ({ code, answer }) => {
-    const room = rooms.get(code);
+    const room = getRoom(code);
     if (!room) return;
     const playerId = socket.data.playerId;
     const player = playerId ? room.players.get(playerId) : null;
@@ -796,11 +800,11 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     const { playerId, roomCode, hostRoomCode } = socket.data;
     if (hostRoomCode) {
-      const room = rooms.get(hostRoomCode);
+      const room = getRoom(hostRoomCode);
       if (room?.hostSocketId === socket.id) room.hostLastSeenAt = Date.now();
     }
     if (playerId && roomCode) {
-      const room = rooms.get(roomCode);
+      const room = getRoom(roomCode);
       if (room?.players.has(playerId)) {
         const p = room.players.get(playerId);
         p.connected = false;

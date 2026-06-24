@@ -682,6 +682,8 @@ io.on('connection', (socket) => {
     const room = getRoom(code);
     if (!room || room.hostSocketId !== socket.id) return cb?.({ ok: false });
     if (room.phase !== 'results') return cb?.({ ok: false });
+    if (room.round?.timer)        clearTimeout(room.round.timer);
+    if (room.round?.tickInterval) clearInterval(room.round.tickInterval);
     room.phase = 'lobby';
     room.round = null;
     emitToRoom(room, 'round:reset', {});

@@ -200,8 +200,7 @@ function playerListPayload(room) {
 }
 
 function broadcastPlayerList(room) {
-  const sock = room.hostSocketId ? io.sockets.sockets.get(room.hostSocketId) : null;
-  if (sock) sock.emit('room:player_list', playerListPayload(room));
+  io.to(`host:${room.code}`).emit('room:player_list', playerListPayload(room));
 }
 
 function emitToRoom(room, event, data) {
@@ -309,7 +308,7 @@ io.on('connection', (socket) => {
   // HOST: kick player
   socket.on('host:kick', ({ code, playerId }) => {
     const room = rooms.get(code);
-    if (!room || room.hostSocketId !== socket.id) return;
+    if (!room || !socket.rooms.has(`host:${code}`)) return;
     const player = room.players.get(playerId);
     if (!player) return;
     room.kickedIds.add(playerId);
@@ -323,7 +322,7 @@ io.on('connection', (socket) => {
   // HOST: start a round
   socket.on('host:start_round', ({ code, category }, cb) => {
     const room = rooms.get(code);
-    if (!room || room.hostSocketId !== socket.id) return cb?.({ ok: false });
+    if (!room || !socket.rooms.has(`host:${code}`)) return cb?.({ ok: false });
     if (room.phase !== 'lobby') return cb?.({ ok: false, error: 'الغرفة ليست في وضع الانتظار' });
 
     room.roundNumber += 1;
@@ -348,7 +347,7 @@ io.on('connection', (socket) => {
   // HOST: manually end the round early
   socket.on('host:end_round', ({ code }, cb) => {
     const room = rooms.get(code);
-    if (!room || room.hostSocketId !== socket.id) return cb?.({ ok: false });
+    if (!room || !socket.rooms.has(`host:${code}`)) return cb?.({ ok: false });
     if (room.phase !== 'round') return cb?.({ ok: false, error: 'الجولة لم تبدأ' });
     endRound(room);
     cb?.({ ok: true });
@@ -357,7 +356,7 @@ io.on('connection', (socket) => {
   // HOST: score a round → enter suspenseful reveal phase (idempotent)
   socket.on('host:score_round', ({ code, decisions }, cb) => {
     const room = rooms.get(code);
-    if (!room || room.hostSocketId !== socket.id) return cb?.({ ok: false });
+    if (!room || !socket.rooms.has(`host:${code}`)) return cb?.({ ok: false });
     if (room.phase !== 'adjudication') return cb?.({ ok: false, error: 'ليس وقت الاحتساب' });
     if (room.round.scored) return cb?.({ ok: true, alreadyScored: true });
 
@@ -382,7 +381,7 @@ io.on('connection', (socket) => {
   // HOST: reveal the next answer (or finalize to leaderboard when done)
   socket.on('host:reveal_advance', ({ code }, cb) => {
     const room = rooms.get(code);
-    if (!room || room.hostSocketId !== socket.id) return cb?.({ ok: false });
+    if (!room || !socket.rooms.has(`host:${code}`)) return cb?.({ ok: false });
     if (room.phase !== 'reveal') return cb?.({ ok: false });
     const rv = room.round.reveal;
     rv.index += 1;
@@ -401,7 +400,7 @@ io.on('connection', (socket) => {
   // HOST: skip the rest of the reveal → straight to leaderboard
   socket.on('host:reveal_skip', ({ code }, cb) => {
     const room = rooms.get(code);
-    if (!room || room.hostSocketId !== socket.id) return cb?.({ ok: false });
+    if (!room || !socket.rooms.has(`host:${code}`)) return cb?.({ ok: false });
     if (room.phase !== 'reveal') return cb?.({ ok: false });
     finalizeRound(room);
     cb?.({ ok: true });
@@ -410,7 +409,7 @@ io.on('connection', (socket) => {
   // HOST: reset to lobby for new round
   socket.on('host:new_round', ({ code }, cb) => {
     const room = rooms.get(code);
-    if (!room || room.hostSocketId !== socket.id) return cb?.({ ok: false });
+    if (!room || !socket.rooms.has(`host:${code}`)) return cb?.({ ok: false });
     if (room.phase !== 'results') return cb?.({ ok: false });
     room.phase = 'lobby';
     room.round = null;
@@ -421,7 +420,7 @@ io.on('connection', (socket) => {
   // HOST: end the game
   socket.on('host:end_game', ({ code }, cb) => {
     const room = rooms.get(code);
-    if (!room || room.hostSocketId !== socket.id) return cb?.({ ok: false });
+    if (!room || !socket.rooms.has(`host:${code}`)) return cb?.({ ok: false });
     room.phase = 'finished';
     const leaderboard = buildLeaderboard(room, new Map());
     emitToRoom(room, 'game:finished', { leaderboard });

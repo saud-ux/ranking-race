@@ -97,14 +97,31 @@
 
       </div>
 
-      <!-- Live round panel (round phase, full-width): host sees category + timer while players answer -->
-      <div id="panel-round-live" class="card round-live-panel hidden">
-        <div class="round-live-head">
-          <div>
-            <div class="section-title" style="margin:0;">جولة جارية ⏱️</div>
-            <div id="round-live-category" class="round-live-category">—</div>
+      <!-- Live race board (round phase, full-width) -->
+      <div id="panel-race" class="card race-panel hidden">
+        <div class="race-header">
+          <div class="section-title" style="margin:0;">🏁 السباق المباشر — <span id="race-category"></span></div>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div id="race-countdown" class="race-countdown">30</div>
+            <button id="btn-end-round" class="btn btn-secondary btn-small">إنهاء الجولة ⏹</button>
           </div>
-          <div id="round-live-countdown" class="duel-countdown-badge">30</div>
+        </div>
+        <div id="race-list" class="race-list"></div>
+      </div>
+
+      <!-- Reveal stage (reveal phase, full-width) -->
+      <div id="panel-reveal" class="card reveal-panel hidden">
+        <div class="reveal-header">
+          <div class="section-title" style="margin:0;">🔍 كشف الإجابات — <span id="reveal-category"></span></div>
+          <div class="reveal-progress"><span id="reveal-index">0</span> / <span id="reveal-total">0</span></div>
+        </div>
+        <div id="reveal-stage" class="reveal-stage">
+          <div class="reveal-hint">اضغط «التالي» لبدء كشف الإجابات…</div>
+        </div>
+        <div id="reveal-history" class="reveal-history"></div>
+        <div class="reveal-controls">
+          <button id="btn-reveal-next" class="btn btn-primary btn-large" style="width:auto;">التالي ▶</button>
+          <button id="btn-reveal-skip" class="btn btn-secondary btn-small">تخطّي العرض ⏭</button>
         </div>
       </div>
 
@@ -152,25 +169,6 @@
         </table>
       </div>
 
-      <!-- Duel live panel (duel phase) -->
-      <div id="panel-duel" class="card duel-panel hidden">
-        <div class="duel-panel-head">
-          <div class="section-title" style="margin:0;">
-            ⚔️ مبارزة الـ Gulag — <span id="host-duel-category" style="color:var(--accent);"></span>
-          </div>
-          <div id="host-duel-countdown" class="duel-countdown-badge">20</div>
-        </div>
-        <div id="host-duel-boxes" class="duel-boxes"></div>
-      </div>
-
-      <!-- Duel result panel (duel_result phase) -->
-      <div id="panel-duel-result" class="card hidden" style="text-align:center;">
-        <div class="duel-result-emoji">⚔️</div>
-        <div id="duel-result-banner" class="duel-result-banner"></div>
-        <p id="duel-result-detail" class="text-muted mt-8"></p>
-        <button id="btn-duel-continue" class="btn btn-primary" style="margin-top:20px;padding:12px 36px;">متابعة</button>
-      </div>
-
       <!-- Final panel (finished phase, full-width) -->
       <div id="panel-final" class="card final-panel hidden">
         <div class="final-title">🎉 انتهت اللعبة!</div>
@@ -199,20 +197,6 @@
       </div>
 
     </div>
-
-    <!-- Gulag confirmation modal -->
-    <div id="gulag-modal" class="modal-overlay hidden">
-      <div class="modal-card">
-        <div class="modal-emoji">⛓️</div>
-        <div class="modal-title">إرسال إلى الـ Gulag؟</div>
-        <p id="gulag-modal-text" class="modal-text"></p>
-        <div class="modal-actions">
-          <button id="btn-gulag-yes" class="btn btn-danger">نعم، أرسله ⚔️</button>
-          <button id="btn-gulag-no" class="btn btn-secondary">تخطّي هذه الجولة</button>
-        </div>
-      </div>
-    </div>
-
   </div>
 
   <script src="/socket.io/socket.io.js"></script>

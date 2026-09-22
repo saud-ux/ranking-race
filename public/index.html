@@ -104,15 +104,6 @@
       </div>
     </div>
 
-    <!-- Gulag wait -->
-    <div id="state-gulagWait" class="hidden">
-      <div class="card lobby-card gulag-card" style="text-align:center;">
-        <p style="font-size:2.8rem;">⛓️</p>
-        <div class="round-ended-msg" style="color:var(--danger);">سقطت إلى الـ Gulag!</div>
-        <p class="text-muted mt-8">تنتظر خصماً… الفائز يرجع للمنافسة ⚔️</p>
-      </div>
-    </div>
-
     <!-- Spectate idle -->
     <div id="state-spectateIdle" class="hidden">
       <div class="card lobby-card" style="text-align:center;">
@@ -122,30 +113,12 @@
       </div>
     </div>
 
-    <!-- Duel -->
-    <div id="state-duel" class="hidden" style="padding:16px;max-width:520px;width:100%;margin:0 auto;">
-      <div class="card mb-16 duel-card" style="text-align:center;">
-        <div class="duel-tag">⚔️ مبارزة الـ Gulag</div>
-        <p class="text-muted mb-4" style="font-size:0.85rem;">ضد <span id="duel-opponent" class="duel-opponent"></span></p>
-        <div id="duel-category" class="category-display"></div>
-        <div id="duel-countdown" class="countdown">20</div>
-      </div>
-      <div class="card">
-        <div class="answer-input-wrap">
-          <input id="duel-input" class="input" type="text" placeholder="اكتب إجابة واضغط إدخال…"
-                 autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-          <button id="btn-duel-submit" class="btn btn-primary">إرسال</button>
-        </div>
-        <div id="duel-chips" class="chips-area"></div>
-      </div>
-    </div>
-
-    <!-- Duel result -->
-    <div id="state-duelResult" class="hidden">
+    <!-- Eliminated -->
+    <div id="state-eliminated" class="hidden">
       <div class="card lobby-card" style="text-align:center;">
-        <p id="duel-result-emoji" style="font-size:3rem;"></p>
-        <div id="duel-result-msg" class="round-ended-msg"></div>
-        <p id="duel-result-sub" class="text-muted mt-8"></p>
+        <p style="font-size:3rem;">💀</p>
+        <div class="round-ended-msg" style="color:var(--danger);">خرجت من اللعبة</div>
+        <p class="text-muted mt-8">بتتفرّج على الباقين لين تنتهي اللعبة 👀</p>
       </div>
     </div>
 

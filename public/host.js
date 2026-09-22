@@ -5,100 +5,12 @@ const PRESETS = [
   'حيوانات','ماركات سيارات','أكلات','لاعبين كرة قدم','مهن','ألوان',
 ];
 
-// ─── Audio engine ─────────────────────────────────────────────────────────────
+// ─── Sound removed ──────────────────────────────────────────────────────────────
+// Audio has been disabled. getCtx() is a no-op and sfx.* calls do nothing,
+// so existing call sites keep working silently.
 
-let audioCtx = null;
-let muted = localStorage.getItem('muted') === '1';
-
-function getCtx() {
-  if (!audioCtx) {
-    const C = window.AudioContext || window.webkitAudioContext;
-    if (C) audioCtx = new C();
-  }
-  if (audioCtx?.state === 'suspended') audioCtx.resume();
-  return audioCtx;
-}
-
-document.addEventListener('pointerdown', () => getCtx(), { once: false, passive: true });
-
-function beep(freq, dur, type = 'sine', vol = 0.22) {
-  if (muted) return;
-  const ctx = getCtx();
-  if (!ctx) return;
-  const osc  = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  osc.type = type;
-  osc.frequency.setValueAtTime(freq, ctx.currentTime);
-  gain.gain.setValueAtTime(vol, ctx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
-  osc.start();
-  osc.stop(ctx.currentTime + dur);
-}
-
-function seq(notes) {
-  notes.forEach(n => setTimeout(() => beep(n.f, n.d, n.t || 'sine', n.v || 0.22), n.at || 0));
-}
-
-function sweep(f1, f2, dur, type = 'sawtooth', vol = 0.25) {
-  if (muted) return;
-  const ctx = getCtx();
-  if (!ctx) return;
-  const osc  = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  osc.type = type;
-  osc.frequency.setValueAtTime(f1, ctx.currentTime);
-  osc.frequency.linearRampToValueAtTime(f2, ctx.currentTime + dur);
-  gain.gain.setValueAtTime(vol, ctx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
-  osc.start();
-  osc.stop(ctx.currentTime + dur);
-}
-
-const sfx = {
-  playerJoin()   { seq([{f:660,d:0.10,at:0},{f:880,d:0.10,at:90}]); },
-  roundStart()   { seq([{f:400,d:0.09,at:0},{f:600,d:0.09,at:80},{f:900,d:0.18,at:160}]); },
-  timeUp()       { sweep(480, 90, 0.75, 'sawtooth', 0.28); },
-  adjReject()    { beep(220, 0.18, 'square', 0.15); },
-  adjAccept()    { beep(660, 0.12, 'sine', 0.15); },
-  scored()       { seq([{f:523,d:0.12,at:0},{f:659,d:0.12,at:110},{f:784,d:0.22,at:220}]); },
-  tick()         { beep(560, 0.07, 'square', 0.08); },
-  urgentTick()   { beep(880, 0.07, 'square', 0.12); },
-  gulagAlert()   { seq([{f:300,d:0.12,at:0},{f:200,d:0.22,at:130}]); },
-  duelStart()    {
-    seq([
-      {f:200,d:0.10,at:0},{f:250,d:0.10,at:100},
-      {f:300,d:0.10,at:200},{f:450,d:0.25,at:320},
-    ]);
-  },
-  fanfare()      {
-    seq([
-      {f:523,d:0.13,at:0},   {f:523,d:0.13,at:140},
-      {f:523,d:0.13,at:280}, {f:698,d:0.35,at:420},
-      {f:659,d:0.35,at:780}, {f:587,d:0.13,at:1100},
-      {f:784,d:0.55,at:1240},
-    ]);
-  },
-};
-
-// ─── Mute toggle ──────────────────────────────────────────────────────────────
-
-function updateMuteBtn() {
-  const btn = document.getElementById('host-mute-btn');
-  if (!btn) return;
-  btn.textContent = muted ? '🔇' : '🔊';
-  btn.title = muted ? 'تشغيل الصوت' : 'كتم الصوت';
-}
-updateMuteBtn();
-
-document.getElementById('host-mute-btn')?.addEventListener('click', () => {
-  muted = !muted;
-  localStorage.setItem('muted', muted ? '1' : '0');
-  updateMuteBtn();
-});
+function getCtx() { return null; }
+const sfx = new Proxy({}, { get: () => () => {} });
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -129,7 +41,7 @@ function hostGoToMenu() {
   state.prevPlayerCount = 0;
   clearInterval(state.roundTickInterval);
   clearInterval(state.duelTickInterval);
-  showScreen('menu');
+  showScreen('lock');
 }
 
 function showHostPhase(phase) {
@@ -229,7 +141,7 @@ document.getElementById('menu-btn-host')?.addEventListener('click', () => {
 document.getElementById('lock-back-btn')?.addEventListener('click', () => {
   document.getElementById('lock-error').textContent = '';
   document.getElementById('input-host-key').value = '';
-  showScreen('menu');
+  showScreen('lock');
 });
 
 // ─── Lock screen ──────────────────────────────────────────────────────────────
@@ -270,9 +182,8 @@ function tryAutoRestoreHost() {
   if (!state.hostKey) return;
   socket.emit('host:authenticate', { key: state.hostKey }, (res) => {
     if (res.ok) {
-      // Only auto-restore if no player state is active
-      const playerInGame = localStorage.getItem('playerId') && localStorage.getItem('roomCode');
-      if (!playerInGame) showMainConsole();
+      // Dedicated host page: always restore straight to the console
+      showMainConsole();
     } else {
       localStorage.removeItem('hostKey');
       state.hostKey = null;

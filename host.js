@@ -1,100 +1,25 @@
-'use strict';
+(function() {
 
-const socket = io();
-
-const PRESETS = [
-  'فواكه','خضار','دول','مدن سعودية','أسماء أولاد','أسماء بنات',
-  'حيوانات','ماركات سيارات','أكلات','لاعبين كرة قدم','مهن','ألوان',
-];
-
-// ─── Audio engine ─────────────────────────────────────────────────────────────
-
-let audioCtx = null;
-let muted = localStorage.getItem('muted') === '1';
-
-function getCtx() {
-  if (!audioCtx) {
-    const C = window.AudioContext || window.webkitAudioContext;
-    if (C) audioCtx = new C();
-  }
-  if (audioCtx?.state === 'suspended') audioCtx.resume();
-  return audioCtx;
-}
-
-document.addEventListener('pointerdown', () => getCtx(), { once: false, passive: true });
-
-function beep(freq, dur, type = 'sine', vol = 0.22) {
-  if (muted) return;
-  const ctx = getCtx();
-  if (!ctx) return;
-  const osc  = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  osc.type = type;
-  osc.frequency.setValueAtTime(freq, ctx.currentTime);
-  gain.gain.setValueAtTime(vol, ctx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
-  osc.start();
-  osc.stop(ctx.currentTime + dur);
-}
-
-function seq(notes) {
-  notes.forEach(n => setTimeout(() => beep(n.f, n.d, n.t || 'sine', n.v || 0.22), n.at || 0));
-}
-
-function sweep(f1, f2, dur, type = 'sawtooth', vol = 0.25) {
-  if (muted) return;
-  const ctx = getCtx();
-  if (!ctx) return;
-  const osc  = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  osc.type = type;
-  osc.frequency.setValueAtTime(f1, ctx.currentTime);
-  osc.frequency.linearRampToValueAtTime(f2, ctx.currentTime + dur);
-  gain.gain.setValueAtTime(vol, ctx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
-  osc.start();
-  osc.stop(ctx.currentTime + dur);
-}
-
-const sfx = {
-  playerJoin()  { beep(660, 0.12, 'sine', 0.14); },
-  roundStart()  { seq([{f:400,d:0.09,at:0},{f:600,d:0.09,at:80},{f:900,d:0.18,at:160}]); },
-  timeUp()      { sweep(480, 90, 0.75, 'sawtooth', 0.28); },
-  adjReject()   { beep(220, 0.18, 'square', 0.15); },
-  adjAccept()   { beep(660, 0.12, 'sine', 0.15); },
-  scored()      { seq([{f:523,d:0.12,at:0},{f:659,d:0.12,at:110},{f:784,d:0.22,at:220}]); },
-  revealReject(){ sweep(300, 110, 0.32, 'square', 0.18); },
-  revealShared(){ beep(640, 0.14, 'sine', 0.16); },
-  revealUnique(){ seq([{f:659,d:0.10,at:0},{f:880,d:0.12,at:90},{f:1175,d:0.28,at:190,v:0.22}]); },
-  fanfare()     {
-    seq([
-      {f:523,d:0.13,at:0},   {f:523,d:0.13,at:140},
-      {f:523,d:0.13,at:280}, {f:698,d:0.35,at:420},
-      {f:659,d:0.35,at:780}, {f:587,d:0.13,at:1100},
-      {f:784,d:0.55,at:1240},
-    ]);
-  },
+const PRESET_GROUPS = {
+  'أكل وشرب': ['فواكه', 'خضار', 'أكلات شعبية سعودية', 'أكلات عالمية', 'حلويات', 'مشروبات', 'بهارات وتوابل', 'وجبات سريعة', 'مطاعم', 'أنواع خبز', 'أجبان', 'مكسرات', 'أنواع قهوة', 'أكلات رمضان', 'عصائر', 'أكلات بحرية'],
+  'أماكن': ['دول', 'عواصم', 'مدن سعودية', 'مدن عالمية', 'دول عربية', 'دول أوروبية', 'دول أفريقية', 'دول آسيوية', 'أحياء الرياض', 'معالم سياحية', 'جزر', 'أنهار', 'جبال', 'بحار ومحيطات', 'مطارات', 'مولات'],
+  'أسماء': ['أسماء أولاد', 'أسماء بنات', 'أسماء تبدأ بحرف الميم', 'أسماء تبدأ بحرف العين', 'أسماء قبائل', 'أسماء عائلات', 'ألقاب مشاهير', 'أسماء قطط وكلاب'],
+  'حيوانات وطبيعة': ['حيوانات', 'طيور', 'حشرات', 'حيوانات بحرية', 'زواحف', 'حيوانات مفترسة', 'حيوانات المزرعة', 'أشجار', 'زهور', 'أحجار كريمة', 'ظواهر طبيعية', 'كواكب ونجوم'],
+  'رياضة': ['لاعبين كرة قدم', 'لاعبين سعوديين', 'أندية سعودية', 'أندية أوروبية', 'منتخبات', 'رياضات', 'مدربين', 'ملاعب', 'مصطلحات كرة قدم', 'أبطال ألعاب قوى', 'رياضات أولمبية', 'ماركات رياضية'],
+  'ترفيه': ['أفلام', 'مسلسلات خليجية', 'مسلسلات كرتون', 'شخصيات كرتون', 'أنمي', 'ألعاب فيديو', 'شخصيات ألعاب', 'ممثلين', 'مغنيين', 'يوتيوبرز', 'برامج تلفزيونية', 'ألعاب شعبية', 'ألعاب ورق وطاولة', 'أبطال خارقين'],
+  'تقنية وماركات': ['ماركات سيارات', 'موديلات سيارات', 'ماركات جوالات', 'تطبيقات', 'مواقع إنترنت', 'شركات تقنية', 'ماركات ملابس', 'ماركات عطور', 'ماركات ساعات', 'لغات برمجة', 'قطع كمبيوتر', 'شبكات تواصل'],
+  'حياة يومية': ['مهن', 'ألوان', 'أدوات مطبخ', 'أثاث', 'أجهزة منزلية', 'ملابس', 'إكسسوارات', 'أدوات مدرسية', 'أدوات نجارة', 'وسائل نقل', 'أجزاء السيارة', 'أجزاء الجسم', 'أمراض', 'أدوية', 'أشياء في الحمام', 'أشياء في الشنطة', 'أشياء في السوبرماركت', 'أشياء لونها أحمر', 'أشياء لونها أخضر', 'أشياء مدوّرة', 'أشياء تطير', 'أشياء باردة'],
+  'ثقافة ومعرفة': ['لغات', 'عملات', 'مواد دراسية', 'تخصصات جامعية', 'جامعات', 'شعراء', 'علماء', 'اختراعات', 'آلات موسيقية', 'أشكال هندسية', 'وحدات قياس', 'عناصر كيميائية', 'سور القرآن', 'أنبياء', 'صحابة', 'غزوات ومعارك', 'شهور', 'أبراج'],
+  'مناسبات': ['أشياء في العيد', 'أشياء في الزواج', 'أشياء في المخيم', 'أشياء في البحر', 'أشياء في رمضان', 'هدايا', 'أشياء في السفر', 'أشياء في المستشفى', 'أشياء في المدرسة', 'أشياء في الملعب'],
 };
+const PRESETS = Object.values(PRESET_GROUPS).flat();
 
-// ─── Mute toggle ──────────────────────────────────────────────────────────────
+// ─── Sound removed ──────────────────────────────────────────────────────────────
+// Audio has been disabled. getCtx() is a no-op and sfx.* calls do nothing,
+// so existing call sites keep working silently.
 
-function updateMuteBtn() {
-  const btn = document.getElementById('host-mute-btn');
-  if (!btn) return;
-  btn.textContent = muted ? '🔇' : '🔊';
-  btn.title = muted ? 'تشغيل الصوت' : 'كتم الصوت';
-}
-updateMuteBtn();
-
-document.getElementById('host-mute-btn')?.addEventListener('click', () => {
-  muted = !muted;
-  localStorage.setItem('muted', muted ? '1' : '0');
-  updateMuteBtn();
-});
+function getCtx() { return null; }
+const sfx = new Proxy({}, { get: () => () => {} });
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -105,24 +30,34 @@ let state = {
   selectedCategory: '',
   adjState: {},
   prevPlayerCount: 0,
-  revealPrev: null,   // previous reveal item (to push into history)
+  elimPending: null,
+  roundTickInterval: null,
+  lastTickSec: -1,
 };
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Screen helpers ───────────────────────────────────────────────────────────
 
-function escapeHtml(str) {
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
 
-function showScreen(id) {
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  document.getElementById(`screen-${id}`).classList.add('active');
+
+function hostGoToMenu() {
+  localStorage.removeItem('hostKey');
+  localStorage.removeItem('hostRoomCode');
+  state.hostKey = null;
+  state.roomCode = null;
+  state.prevPlayerCount = 0;
+  clearInterval(state.roundTickInterval);
+  showScreen('lock');
 }
 
 function showHostPhase(phase) {
   state.phase = phase;
-  const allPanels = ['panel-no-room','panel-room-info','panel-right','panel-race','panel-reveal',
-                     'panel-adjudication','panel-leaderboard','panel-final'];
+  state.lastTickSec = -1;
+
+  const allPanels = [
+    'panel-no-room','panel-room-info','panel-right',
+    'panel-adjudication','panel-leaderboard','panel-final',
+    'panel-round-live',
+  ];
   allPanels.forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -139,13 +74,32 @@ function showHostPhase(phase) {
   }
 
   switch (phase) {
-    case 'no-room':     show('panel-no-room'); break;
-    case 'lobby':       show('panel-room-info'); show('panel-right'); show('round-controls'); break;
-    case 'round':       show('panel-room-info'); show('panel-race'); break;
-    case 'reveal':      show('panel-reveal'); break;
-    case 'adjudication':show('panel-room-info'); show('panel-right'); show('panel-adjudication'); break;
-    case 'results':     show('panel-room-info'); show('panel-right'); show('panel-leaderboard'); break;
-    case 'finished':    show('panel-final'); break;
+    case 'no-room':
+      show('panel-no-room');
+      break;
+    case 'lobby':
+      show('panel-room-info');
+      show('panel-right');
+      show('round-controls');
+      break;
+    case 'round':
+      show('panel-room-info');
+      show('panel-right');
+      show('panel-round-live');
+      break;
+    case 'adjudication':
+      show('panel-room-info');
+      show('panel-right');
+      show('panel-adjudication');
+      break;
+    case 'results':
+      show('panel-room-info');
+      show('panel-right');
+      show('panel-leaderboard');
+      break;
+    case 'finished':
+      show('panel-final');
+      break;
   }
 }
 
@@ -154,14 +108,40 @@ function setConnectionStatus(status) {
   const label = document.getElementById('host-conn-label');
   if (!dot) return;
   dot.className = `status-dot ${status}`;
-  label.textContent = status === 'connected' ? 'متصل'
+  label.textContent = status === 'connected'    ? 'متصل'
                     : status === 'reconnecting' ? 'إعادة الاتصال…' : 'منقطع';
 }
 
+// ─── Main menu → host flow ────────────────────────────────────────────────────
+
+document.getElementById('menu-btn-host')?.addEventListener('click', () => {
+  getCtx();
+  // If already have a valid key stored, try to go straight to console
+  if (state.hostKey) {
+    socket.emit('host:authenticate', { key: state.hostKey }, (res) => {
+      if (res.ok) showMainConsole();
+      else {
+        localStorage.removeItem('hostKey');
+        state.hostKey = null;
+        showScreen('lock');
+      }
+    });
+  } else {
+    showScreen('lock');
+  }
+});
+
+// Back button on lock screen
+document.getElementById('lock-back-btn')?.addEventListener('click', () => {
+  document.getElementById('lock-error').textContent = '';
+  document.getElementById('input-host-key').value = '';
+  showScreen('lock');
+});
+
 // ─── Lock screen ──────────────────────────────────────────────────────────────
 
-document.getElementById('btn-unlock').addEventListener('click', doUnlock);
-document.getElementById('input-host-key').addEventListener('keydown', e => { if (e.key === 'Enter') doUnlock(); });
+document.getElementById('btn-unlock')?.addEventListener('click', doUnlock);
+document.getElementById('input-host-key')?.addEventListener('keydown', e => { if (e.key === 'Enter') doUnlock(); });
 
 function doUnlock() {
   const key = document.getElementById('input-host-key').value;
@@ -171,9 +151,13 @@ function doUnlock() {
     if (res.ok) {
       state.hostKey = key;
       localStorage.setItem('hostKey', key);
+      document.getElementById('input-host-key').value = '';
       showMainConsole();
     } else {
       document.getElementById('lock-error').textContent = res.error || 'مفتاح خاطئ';
+      const input = document.getElementById('input-host-key');
+      input.classList.add('input-error-shake');
+      setTimeout(() => input.classList.remove('input-error-shake'), 500);
     }
   });
 }
@@ -185,33 +169,33 @@ function showMainConsole() {
   else showHostPhase('no-room');
 }
 
-if (state.hostKey) {
+// ─── Auto-restore host session on page load ───────────────────────────────────
+// Runs after socket is available (deferred to end of script via socket.on connect)
+
+function tryAutoRestoreHost() {
+  if (!state.hostKey) return;
   socket.emit('host:authenticate', { key: state.hostKey }, (res) => {
-    if (res.ok) showMainConsole();
-    else {
+    if (res.ok) {
+      // Dedicated host page: always restore straight to the console
+      showMainConsole();
+    } else {
       localStorage.removeItem('hostKey');
       state.hostKey = null;
-      showScreen('lock');
     }
   });
-} else {
-  showScreen('lock');
 }
 
 // ─── Logout ───────────────────────────────────────────────────────────────────
 
-document.getElementById('btn-logout').addEventListener('click', () => {
-  localStorage.removeItem('hostKey');
-  localStorage.removeItem('hostRoomCode');
-  state.hostKey = null;
-  state.roomCode = null;
-  showScreen('lock');
-});
+document.getElementById('btn-logout')?.addEventListener('click', hostGoToMenu);
 
 // ─── Create room ──────────────────────────────────────────────────────────────
 
-document.getElementById('btn-create-room').addEventListener('click', () => {
+document.getElementById('btn-create-room')?.addEventListener('click', () => {
+  const btn = document.getElementById('btn-create-room');
+  btn.disabled = true;
   socket.emit('host:create_room', { key: state.hostKey }, (res) => {
+    btn.disabled = false;
     if (res.ok) {
       state.roomCode = res.code;
       localStorage.setItem('hostRoomCode', res.code);
@@ -236,14 +220,11 @@ function tryRejoinRoom() {
 
     switch (res.phase) {
       case 'round':
-        document.getElementById('race-category').textContent = res.category || '';
-        if (res.standings) renderRaceBoard({ standings: res.standings });
-        if (res.endsAt) startHostCountdown(res.endsAt);
+        if (res.roundInfo) {
+          document.getElementById('round-live-category').textContent = res.roundInfo.category;
+          startHostRoundCountdown(res.roundInfo.endsAt);
+        }
         showHostPhase('round');
-        break;
-      case 'reveal':
-        if (res.revealInfo) resumeReveal(res.revealInfo, res.category, res.roundNumber);
-        showHostPhase('reveal');
         break;
       case 'adjudication':
         if (res.adjGroups) renderAdjudicationPanel(res.adjGroups, res.adjCategory, res.roundNumber);
@@ -260,6 +241,11 @@ function tryRejoinRoom() {
       default:
         showHostPhase('lobby');
     }
+
+    if (res.pendingElim) {
+      state.elimPending = res.pendingElim;
+      renderElimPrompt(res.pendingElim);
+    }
   });
 }
 
@@ -269,11 +255,47 @@ function setupRoomView(code) {
   document.getElementById('room-code-display').textContent = code;
   const joinUrl = `${window.location.origin}/?room=${code}`;
   document.getElementById('qr-url').textContent = joinUrl;
-  if (typeof QRCode !== 'undefined') {
-    QRCode.toDataURL(joinUrl, { width: 200, margin: 1, color: { dark: '#f59e0b', light: '#1a1a35' } }, (err, url) => {
-      if (!err) document.getElementById('qr-img').src = url;
+  generateQR(joinUrl);
+}
+
+function generateQR(url) {
+  const canvas = document.getElementById('qr-canvas');
+  const img    = document.getElementById('qr-img');
+
+  function tryGenerate() {
+    if (typeof QRCode === 'undefined') {
+      setTimeout(tryGenerate, 300);
+      return;
+    }
+    if (canvas && QRCode.toCanvas) {
+      QRCode.toCanvas(canvas, url, {
+        width: 180, margin: 1,
+        color: { dark: '#f59e0b', light: '#1a1a35' },
+      }, (err) => {
+        if (err) { tryDataURL(url); return; }
+        canvas.style.display = 'block';
+        canvas.style.border = '4px solid #f59e0b';
+        canvas.style.borderRadius = '8px';
+        if (img) img.style.display = 'none';
+      });
+    } else {
+      tryDataURL(url);
+    }
+  }
+
+  function tryDataURL(u) {
+    if (!QRCode?.toDataURL) return;
+    QRCode.toDataURL(u, {
+      width: 180, margin: 1,
+      color: { dark: '#f59e0b', light: '#1a1a35' },
+    }, (err, dataUrl) => {
+      if (err) return;
+      if (img) { img.src = dataUrl; img.style.display = 'block'; }
+      if (canvas) canvas.style.display = 'none';
     });
   }
+
+  tryGenerate();
 }
 
 // ─── Player list ──────────────────────────────────────────────────────────────
@@ -283,32 +305,66 @@ function renderPlayerList(players) {
   const badge = document.getElementById('player-count-badge');
   badge.textContent = `${players.length} / 20`;
 
-  // Play join sound when count increases
   if (players.length > state.prevPlayerCount) sfx.playerJoin();
   state.prevPlayerCount = players.length;
 
   if (!players.length) {
-    list.innerHTML = '<p class="text-muted" style="font-size:0.9rem;">لم ينضم أحد بعد…</p>';
+    list.innerHTML = '<p class="text-muted" style="font-size:0.9rem;text-align:center;padding:12px 0;">لم ينضم أحد بعد…</p>';
     return;
   }
 
+  const scrollTop = list.scrollTop;
   list.innerHTML = '';
+
   players.forEach((p, idx) => {
     const row = document.createElement('div');
     row.className = `player-row${p.connected ? '' : ' offline'}`;
-    row.style.setProperty('--row-delay', `${idx * 50}ms`);
+    if (p.status === 'out')   row.classList.add('player-out');
+    row.style.setProperty('--row-delay', `${idx * 40}ms`);
     row.classList.add('lb-row-enter');
+
+    const statusBadge = p.status === 'out' ? '<span class="status-pill pill-out">خارج</span>' : '';
+    const pid = escapeHtml(p.playerId);
     row.innerHTML = `
       <span class="${p.connected ? 'online-dot' : 'offline-dot'}"></span>
-      <span class="player-name">${escapeHtml(p.nickname)}</span>
-      <span class="text-muted" style="font-size:0.85rem;margin-inline-start:auto;margin-inline-end:8px;">${p.score ?? 0}</span>
-      <button class="btn btn-danger btn-small" data-pid="${escapeHtml(p.playerId)}">طرد</button>
+      <span class="player-name">${escapeHtml(p.nickname)}${statusBadge ? ' ' + statusBadge : ''}</span>
+      <div class="score-controls">
+        <button class="adj-btn adj-minus" data-pid="${pid}" title="−1">−</button>
+        <span class="player-score" id="score-${pid}">${p.score ?? 0}</span>
+        <button class="adj-btn adj-plus"  data-pid="${pid}" title="+1">+</button>
+      </div>
+      <button class="btn btn-danger btn-small kick-btn" data-pid="${pid}">طرد</button>
     `;
-    row.querySelector('button').addEventListener('click', e =>
-      socket.emit('host:kick', { code: state.roomCode, playerId: e.target.dataset.pid })
-    );
+
+    row.querySelector('.adj-minus').addEventListener('click', e => {
+      const id = e.currentTarget.dataset.pid;
+      socket.emit('host:adjust_score', { code: state.roomCode, playerId: id, delta: -1 }, (res) => {
+        if (res?.ok) flashScore(id, false);
+      });
+    });
+    row.querySelector('.adj-plus').addEventListener('click', e => {
+      const id = e.currentTarget.dataset.pid;
+      socket.emit('host:adjust_score', { code: state.roomCode, playerId: id, delta: 1 }, (res) => {
+        if (res?.ok) flashScore(id, true);
+      });
+    });
+    row.querySelector('.kick-btn').addEventListener('click', e => {
+      socket.emit('host:kick', { code: state.roomCode, playerId: e.currentTarget.dataset.pid });
+    });
+
     list.appendChild(row);
   });
+
+  list.scrollTop = scrollTop;
+}
+
+function flashScore(pid, positive) {
+  const el = document.getElementById(`score-${escapeHtml(pid)}`);
+  if (!el) return;
+  el.classList.remove('score-flash-up', 'score-flash-down');
+  void el.offsetWidth;
+  el.classList.add(positive ? 'score-flash-up' : 'score-flash-down');
+  setTimeout(() => el.classList.remove('score-flash-up', 'score-flash-down'), 600);
 }
 
 socket.on('room:player_list', renderPlayerList);
@@ -317,13 +373,59 @@ socket.on('room:player_list', renderPlayerList);
 
 function buildPresets() {
   const grid = document.getElementById('preset-grid');
+  if (!grid) return;
   grid.innerHTML = '';
-  PRESETS.forEach(cat => {
-    const btn = document.createElement('button');
-    btn.className = 'preset-btn';
-    btn.textContent = cat;
-    btn.addEventListener('click', () => selectPreset(cat, btn));
-    grid.appendChild(btn);
+
+  // Search + random
+  const tools = document.createElement('div');
+  tools.className = 'preset-tools';
+  tools.innerHTML = `
+    <input type="text" class="preset-search" placeholder="ابحث عن فئة…">
+    <button type="button" class="preset-btn preset-random">🎲 عشوائي</button>
+  `;
+  grid.appendChild(tools);
+
+  const scroll = document.createElement('div');
+  scroll.className = 'preset-scroll';
+  grid.appendChild(scroll);
+
+  Object.entries(PRESET_GROUPS).forEach(([groupName, cats]) => {
+    const section = document.createElement('div');
+    section.className = 'preset-section';
+    section.innerHTML = `<div class="preset-section-title">${escapeHtml(groupName)} <span>${cats.length}</span></div>`;
+    const wrap = document.createElement('div');
+    wrap.className = 'preset-section-items';
+    cats.forEach(cat => {
+      const btn = document.createElement('button');
+      btn.className = 'preset-btn';
+      btn.textContent = cat;
+      btn.dataset.cat = cat;
+      btn.addEventListener('click', () => selectPreset(cat, btn));
+      wrap.appendChild(btn);
+    });
+    section.appendChild(wrap);
+    scroll.appendChild(section);
+  });
+
+  tools.querySelector('.preset-search').addEventListener('input', e => {
+    const q = e.target.value.trim();
+    scroll.querySelectorAll('.preset-section').forEach(sec => {
+      let visible = 0;
+      sec.querySelectorAll('.preset-btn').forEach(b => {
+        const show = !q || b.dataset.cat.includes(q);
+        b.classList.toggle('hidden', !show);
+        if (show) visible++;
+      });
+      sec.classList.toggle('hidden', visible === 0);
+    });
+  });
+
+  tools.querySelector('.preset-random').addEventListener('click', () => {
+    const btns = [...scroll.querySelectorAll('.preset-btn:not(.hidden)')];
+    if (!btns.length) return;
+    const btn = btns[Math.floor(Math.random() * btns.length)];
+    selectPreset(btn.dataset.cat, btn);
+    btn.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   });
 }
 
@@ -334,7 +436,7 @@ function selectPreset(cat, btn) {
   setSelectedCategory(cat);
 }
 
-document.getElementById('custom-category').addEventListener('input', e => {
+document.getElementById('custom-category')?.addEventListener('input', e => {
   document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('selected'));
   setSelectedCategory(e.target.value.trim());
 });
@@ -347,9 +449,31 @@ function setSelectedCategory(cat) {
   else     { display.classList.add('hidden'); btn.disabled = true; }
 }
 
+// ─── Live round countdown ─────────────────────────────────────────────────────
+
+function startHostRoundCountdown(endsAt) {
+  clearInterval(state.roundTickInterval);
+  state.lastTickSec = -1;
+  const el = document.getElementById('round-live-countdown');
+  if (!el) return;
+
+  function tick() {
+    const rem = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+    el.textContent = rem;
+    el.classList.toggle('urgent', rem <= 10);
+    if (rem <= 10 && rem > 0 && rem !== state.lastTickSec) {
+      state.lastTickSec = rem;
+      rem <= 5 ? sfx.urgentTick() : sfx.tick();
+    }
+    if (rem <= 0) clearInterval(state.roundTickInterval);
+  }
+  tick();
+  state.roundTickInterval = setInterval(tick, 250);
+}
+
 // ─── Start round ──────────────────────────────────────────────────────────────
 
-document.getElementById('btn-start-round').addEventListener('click', () => {
+document.getElementById('btn-start-round')?.addEventListener('click', () => {
   if (!state.selectedCategory) return;
   document.getElementById('round-error').textContent = '';
   document.getElementById('btn-start-round').disabled = true;
@@ -357,10 +481,8 @@ document.getElementById('btn-start-round').addEventListener('click', () => {
   socket.emit('host:start_round', { code: state.roomCode, category: state.selectedCategory }, (res) => {
     if (res?.ok) {
       sfx.roundStart();
-      document.getElementById('race-category').textContent = state.selectedCategory;
-      document.getElementById('race-countdown').textContent = '30';
-      document.getElementById('race-countdown').classList.remove('urgent');
-      document.getElementById('race-list').innerHTML = '';
+      document.getElementById('round-live-category').textContent = state.selectedCategory;
+      startHostRoundCountdown(res.endsAt);
       showHostPhase('round');
     } else {
       document.getElementById('round-error').textContent = res?.error || 'حدث خطأ';
@@ -369,81 +491,80 @@ document.getElementById('btn-start-round').addEventListener('click', () => {
   });
 });
 
-// ─── End round early ──────────────────────────────────────────────────────────
-
-document.getElementById('btn-end-round').addEventListener('click', () => {
-  const btn = document.getElementById('btn-end-round');
-  btn.disabled = true;
-  socket.emit('host:end_round', { code: state.roomCode }, (res) => {
-    if (!res?.ok) btn.disabled = false;
-  });
-});
-
 // ─── Adjudication ─────────────────────────────────────────────────────────────
 
 socket.on('round:ended', ({ groups, category, roundNumber }) => {
+  clearInterval(state.roundTickInterval);
   sfx.timeUp();
   renderAdjudicationPanel(groups, category, roundNumber);
   showHostPhase('adjudication');
-});
-
-// Fallback: if round:ended was missed, round:time_up still arrives via room broadcast
-socket.on('round:time_up', () => {
-  if (state.phase !== 'round') return;
-  // Request current round state from server to render adjudication
-  socket.emit('host:rejoin_room', { key: state.hostKey, code: state.roomCode }, (res) => {
-    if (!res?.ok) return;
-    if (res.phase === 'adjudication' && res.adjGroups) {
-      sfx.timeUp();
-      renderAdjudicationPanel(res.adjGroups, res.adjCategory, res.roundNumber);
-      showHostPhase('adjudication');
-    }
-  });
 });
 
 function renderAdjudicationPanel(groups, category, roundNumber) {
   document.getElementById('adj-category').textContent = category;
   document.getElementById('adj-round-num').textContent = roundNumber;
 
+  const labelOccurrence = {};
+  const duplicateKeys = new Set();
+  groups.forEach(g => {
+    const seen = labelOccurrence[g.displayLabel] || 0;
+    if (seen >= 1) duplicateKeys.add(g.key);
+    labelOccurrence[g.displayLabel] = seen + 1;
+  });
+
   state.adjState = {};
-  groups.forEach(g => { state.adjState[g.key] = true; });
+  groups.forEach(g => { state.adjState[g.key] = !duplicateKeys.has(g.key); });
   updateAdjStats(groups);
 
   const list = document.getElementById('adj-list');
   list.innerHTML = '';
 
   groups.forEach((g, idx) => {
+    const isDup = duplicateKeys.has(g.key);
+    const initialValid = !isDup;
+    const nicks = g.playerNicks || [];
+
     const row = document.createElement('div');
-    row.className = 'adj-row lb-row-enter';
-    row.style.setProperty('--row-delay', `${idx * 40}ms`);
-    row.dataset.key   = g.key;
-    row.dataset.label = g.displayLabel;
+    row.className = 'adj-row lb-row-enter' + (isDup ? ' rejected' : '');
+    row.style.setProperty('--row-delay', `${idx * 35}ms`);
+    row.dataset.key    = g.key;
+    row.dataset.label  = g.displayLabel;
+    row.dataset.search = `${g.displayLabel} ${nicks.join(' ')}`;
+
+    const nicksHtml = nicks.length
+      ? `<div class="adj-nicks">${nicks.map(n => `<span class="adj-nick">${escapeHtml(n)}</span>`).join('')}</div>`
+      : '';
+    const dupBadge = isDup
+      ? `<span class="adj-dup-badge" title="ظهرت نفس الكلمة في صف آخر">مكرّر</span>`
+      : '';
+
+    const uniqueClass = g.playerCount === 1 ? ' adj-row-unique' : '';
+    row.classList.add(...uniqueClass.trim().split(' ').filter(Boolean));
 
     row.innerHTML = `
-      <button class="adj-toggle valid" title="تبديل">✓</button>
-      <span class="adj-label">${escapeHtml(g.displayLabel)}</span>
-      <span class="adj-count">${g.playerCount} ${g.playerCount === 1 ? 'لاعب' : 'لاعبين'}</span>
+      <button class="adj-toggle ${initialValid ? 'valid' : 'invalid'}" title="تبديل">${initialValid ? '✓' : '✗'}</button>
+      <div class="adj-label-wrap">
+        <div class="adj-label-row">
+          <span class="adj-label">${escapeHtml(g.displayLabel)}</span>
+          ${dupBadge}
+        </div>
+        ${nicksHtml}
+      </div>
+      <span class="adj-count-badge ${g.playerCount === 1 ? 'adj-count-unique' : ''}">${g.playerCount}</span>
     `;
 
     row.querySelector('.adj-toggle').addEventListener('click', (e) => {
-      const key   = row.dataset.key;
+      const key  = row.dataset.key;
       state.adjState[key] = !state.adjState[key];
       const valid = state.adjState[key];
       e.target.classList.toggle('valid',   valid);
       e.target.classList.toggle('invalid', !valid);
       e.target.textContent = valid ? '✓' : '✗';
       row.classList.toggle('rejected', !valid);
-
-      // Shake on reject, brief pop on accept
       if (!valid) {
-        row.classList.remove('shake');
-        void row.offsetWidth;
-        row.classList.add('shake');
+        row.classList.remove('shake'); void row.offsetWidth; row.classList.add('shake');
         sfx.adjReject();
-      } else {
-        sfx.adjAccept();
-      }
-
+      } else { sfx.adjAccept(); }
       updateAdjStats(groups);
     });
 
@@ -454,7 +575,7 @@ function renderAdjudicationPanel(groups, category, roundNumber) {
   document.getElementById('adj-search').oninput = (e) => {
     const q = e.target.value.trim();
     document.querySelectorAll('.adj-row').forEach(row => {
-      row.classList.toggle('hidden', !!q && !row.dataset.label.includes(q));
+      row.classList.toggle('hidden', !!q && !row.dataset.search.includes(q));
     });
   };
 }
@@ -463,173 +584,21 @@ function updateAdjStats(groups) {
   const valid   = groups.filter(g => state.adjState[g.key] !== false).length;
   const invalid = groups.length - valid;
   document.getElementById('adj-stats').innerHTML = `
-    <span>✓ مقبول: <strong>${valid}</strong></span>
-    <span>✗ مرفوض: <strong>${invalid}</strong></span>
+    <span class="adj-stat-valid">✓ مقبول: <strong>${valid}</strong></span>
+    <span class="adj-stat-invalid">✗ مرفوض: <strong>${invalid}</strong></span>
     <span>الإجمالي: <strong>${groups.length}</strong></span>
   `;
 }
 
-document.getElementById('btn-score-round').addEventListener('click', () => {
+document.getElementById('btn-score-round')?.addEventListener('click', () => {
   const decisions = Object.entries(state.adjState).map(([key, valid]) => ({ key, valid }));
-  document.getElementById('btn-score-round').disabled = true;
-  socket.emit('host:score_round', { code: state.roomCode, decisions }, () => {
-    document.getElementById('btn-score-round').disabled = false;
-  });
-});
-
-// ─── Live race board ──────────────────────────────────────────────────────────
-
-function renderRaceBoard({ standings }) {
-  const list = document.getElementById('race-list');
-  if (!list) return;
-  if (!standings || !standings.length) {
-    list.innerHTML = '<p class="text-muted" style="font-size:0.9rem;">في انتظار الإجابات…</p>';
-    return;
-  }
-  if (list.querySelector('p')) list.innerHTML = '';   // drop placeholder
-  const max = Math.max(1, ...standings.map(s => s.count));
-  const seen = new Set();
-
-  standings.forEach((s) => {
-    seen.add(s.playerId);
-    let row = list.querySelector(`[data-pid="${s.playerId}"]`);
-    if (!row) {
-      row = document.createElement('div');
-      row.className = 'race-row';
-      row.dataset.pid = s.playerId;
-      row.innerHTML =
-        '<span class="race-rank"></span><span class="race-name"></span>' +
-        '<span class="race-bar-wrap"><span class="race-bar"></span></span>' +
-        '<span class="race-count"></span>';
-      list.appendChild(row);
-    }
-    row.querySelector('.race-rank').textContent  = s.rank;
-    row.querySelector('.race-name').textContent  = s.nickname;
-    row.querySelector('.race-count').textContent = s.count;
-    row.querySelector('.race-bar').style.width   = Math.round((s.count / max) * 100) + '%';
-    row.classList.toggle('leader', s.rank === 1 && s.count > 0);
-    list.appendChild(row);   // re-append → reorder into sorted position (CSS animates the bar)
-  });
-
-  list.querySelectorAll('[data-pid]').forEach(row => {
-    if (!seen.has(row.dataset.pid)) row.remove();
-  });
-}
-socket.on('round:standings', renderRaceBoard);
-
-function startHostCountdown(endsAt) {
-  const el = document.getElementById('race-countdown');
-  if (!el) return;
-  const rem = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
-  el.textContent = rem;
-  el.classList.toggle('urgent', rem <= 10 && rem > 0);
-}
-
-socket.on('round:tick', ({ remaining }) => {
-  const el = document.getElementById('race-countdown');
-  if (!el) return;
-  el.textContent = remaining;
-  el.classList.toggle('urgent', remaining <= 10 && remaining > 0);
-});
-
-// ─── Reveal sequence ──────────────────────────────────────────────────────────
-
-function revealCardHtml(item, hero) {
-  const ptsClass = item.tier === 'unique' ? 'pts-unique'
-                 : item.tier === 'rejected' ? 'pts-rejected' : 'pts-shared';
-  const ptsText  = (item.points > 0 ? '+' : '') + item.points;
-  const countTxt = item.count + ' ' + (item.count === 1 ? 'لاعب' : 'لاعبين');
-  const players  = item.players && item.players.length
-    ? `<div class="reveal-card-players">${item.players.map(escapeHtml).join('، ')}</div>` : '';
-  return `
-    <div class="reveal-card tier-${item.tier} ${hero ? 'hero pop' : 'compact'}">
-      <div class="reveal-card-main">
-        <span class="reveal-card-label">${escapeHtml(item.label)}</span>
-        <span class="reveal-points ${ptsClass}">${ptsText}</span>
-      </div>
-      <div class="reveal-card-sub">
-        <span class="reveal-card-count">${countTxt}</span>${players}
-      </div>
-    </div>`;
-}
-
-function prependRevealHistory(item) {
-  const hist = document.getElementById('reveal-history');
-  const div = document.createElement('div');
-  div.innerHTML = revealCardHtml(item, false);
-  hist.prepend(div.firstElementChild);
-}
-
-function renderHostReveal(item, index, total, last) {
-  if (state.revealPrev) prependRevealHistory(state.revealPrev);
-  state.revealPrev = item;
-
-  document.getElementById('reveal-index').textContent = index + 1;
-  document.getElementById('reveal-total').textContent = total;
-  document.getElementById('reveal-stage').innerHTML = revealCardHtml(item, true);
-
-  if (item.tier === 'unique')        sfx.revealUnique();
-  else if (item.tier === 'rejected') sfx.revealReject();
-  else                               sfx.revealShared();
-
-  const nextBtn = document.getElementById('btn-reveal-next');
-  nextBtn.disabled = false;
-  nextBtn.textContent = last ? 'عرض الترتيب 🏆' : 'التالي ▶';
-}
-
-function resumeReveal(info, category) {
-  state.revealPrev = null;
-  document.getElementById('reveal-category').textContent = category || '';
-  document.getElementById('reveal-total').textContent = info.total;
-  document.getElementById('reveal-history').innerHTML = '';
-  const stage   = document.getElementById('reveal-stage');
-  const nextBtn = document.getElementById('btn-reveal-next');
-  nextBtn.disabled = false;
-
-  if (!info.items.length || info.index < 0) {
-    document.getElementById('reveal-index').textContent = '0';
-    stage.innerHTML = '<div class="reveal-hint">اضغط «التالي» لبدء كشف الإجابات…</div>';
-    nextBtn.textContent = 'التالي ▶';
-    return;
-  }
-  document.getElementById('reveal-index').textContent = info.index + 1;
-  for (let i = 0; i < info.items.length - 1; i++) prependRevealHistory(info.items[i]);
-  const lastItem = info.items[info.items.length - 1];
-  state.revealPrev = lastItem;
-  stage.innerHTML = revealCardHtml(lastItem, true);
-  nextBtn.textContent = info.index === info.total - 1 ? 'عرض الترتيب 🏆' : 'التالي ▶';
-}
-
-socket.on('round:reveal_start', ({ category, total }) => {
-  state.revealPrev = null;
-  document.getElementById('reveal-category').textContent = category || '';
-  document.getElementById('reveal-index').textContent = '0';
-  document.getElementById('reveal-total').textContent = total;
-  document.getElementById('reveal-stage').innerHTML =
-    '<div class="reveal-hint">اضغط «التالي» لبدء كشف الإجابات…</div>';
-  document.getElementById('reveal-history').innerHTML = '';
-  const nextBtn = document.getElementById('btn-reveal-next');
-  nextBtn.textContent = 'التالي ▶';
-  nextBtn.disabled = false;
-  showHostPhase('reveal');
-});
-
-socket.on('round:reveal_item', ({ item, index, total, last }) => {
-  renderHostReveal(item, index, total, last);
-});
-
-document.getElementById('btn-reveal-next').addEventListener('click', () => {
-  const btn = document.getElementById('btn-reveal-next');
+  const btn = document.getElementById('btn-score-round');
   btn.disabled = true;
-  socket.emit('host:reveal_advance', { code: state.roomCode }, (res) => {
-    if (res && res.finished) return;          // round:results will switch the panel
-    if (!res || !res.ok) btn.disabled = false; // error → allow retry
+  btn.textContent = 'جارٍ الاحتساب…';
+  socket.emit('host:score_round', { code: state.roomCode, decisions }, () => {
+    btn.disabled = false;
+    btn.textContent = 'احتساب النقاط';
   });
-});
-
-document.getElementById('btn-reveal-skip').addEventListener('click', () => {
-  document.getElementById('btn-reveal-next').disabled = true;
-  socket.emit('host:reveal_skip', { code: state.roomCode });
 });
 
 // ─── Leaderboard ──────────────────────────────────────────────────────────────
@@ -650,8 +619,9 @@ function renderLeaderboard(leaderboard, roundNumber) {
     tr.style.setProperty('--row-delay', `${idx * 70}ms`);
     const sign = entry.roundScore > 0 ? '+' : '';
     const cls  = entry.roundScore > 0 ? 'delta-pos' : entry.roundScore < 0 ? 'delta-neg' : 'delta-zero';
+    const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '';
     tr.innerHTML = `
-      <td class="rank-cell">${entry.rank}</td>
+      <td class="rank-cell">${medal || entry.rank}</td>
       <td class="name-cell">${escapeHtml(entry.nickname)}</td>
       <td class="delta-cell ${cls} delta-pop" style="animation-delay:${idx*70+300}ms">${sign}${entry.roundScore}</td>
       <td class="score-cell">${entry.totalScore}</td>
@@ -660,23 +630,49 @@ function renderLeaderboard(leaderboard, roundNumber) {
   });
 }
 
-document.getElementById('btn-new-round').addEventListener('click', () => {
+document.getElementById('btn-new-round')?.addEventListener('click', () => {
   socket.emit('host:new_round', { code: state.roomCode }, (res) => {
-    if (res?.ok) {
-      state.selectedCategory = '';
-      document.getElementById('selected-category-display').classList.add('hidden');
-      document.getElementById('btn-start-round').disabled = true;
-      document.getElementById('custom-category').value = '';
-      document.getElementById('round-error').textContent = '';
-      document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('selected'));
-      showHostPhase('lobby');
-    }
+    if (res?.ok) { resetRoundControls(); showHostPhase('lobby'); }
   });
 });
 
-document.getElementById('btn-end-game').addEventListener('click', () => {
+document.getElementById('btn-end-game')?.addEventListener('click', () => {
   socket.emit('host:end_game', { code: state.roomCode });
 });
+
+function resetRoundControls() {
+  state.selectedCategory = '';
+  document.getElementById('selected-category-display').classList.add('hidden');
+  document.getElementById('btn-start-round').disabled = true;
+  document.getElementById('custom-category').value = '';
+  document.getElementById('round-error').textContent = '';
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('selected'));
+}
+
+// ─── Elimination prompt modal ─────────────────────────────────────────────────
+
+function showElimModal(show) {
+  document.getElementById('elim-modal').classList.toggle('hidden', !show);
+}
+
+function renderElimPrompt({ nickname }) {
+  document.getElementById('elim-modal-text').innerHTML =
+    `آخر لاعب بالترتيب: «${escapeHtml(nickname)}».<br>يخرج من اللعبة ويصير متفرّجاً.`;
+  showElimModal(true);
+}
+
+socket.on('elim:prompt', (data) => {
+  state.elimPending = data;
+  renderElimPrompt(data);
+});
+
+function sendElimDecision(accept) {
+  socket.emit('host:elim_decision', { code: state.roomCode, accept });
+  showElimModal(false);
+  state.elimPending = null;
+}
+document.getElementById('btn-elim-yes')?.addEventListener('click', () => sendElimDecision(true));
+document.getElementById('btn-elim-no')?.addEventListener('click',  () => sendElimDecision(false));
 
 // ─── Final screen ─────────────────────────────────────────────────────────────
 
@@ -695,8 +691,9 @@ function renderFinal(leaderboard) {
     const tr = document.createElement('tr');
     tr.className = idx === 0 ? 'rank-1-row lb-row-enter' : 'lb-row-enter';
     tr.style.setProperty('--row-delay', `${idx * 60}ms`);
+    const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '';
     tr.innerHTML = `
-      <td class="rank-cell">${entry.rank}</td>
+      <td class="rank-cell">${medal || entry.rank}</td>
       <td class="name-cell">${escapeHtml(entry.nickname)}</td>
       <td class="score-cell">${entry.totalScore}</td>
     `;
@@ -704,7 +701,7 @@ function renderFinal(leaderboard) {
   });
 }
 
-document.getElementById('btn-new-game').addEventListener('click', () => {
+document.getElementById('btn-new-game')?.addEventListener('click', () => {
   localStorage.removeItem('hostRoomCode');
   state.roomCode = null;
   state.prevPlayerCount = 0;
@@ -715,13 +712,14 @@ document.getElementById('btn-new-game').addEventListener('click', () => {
 
 function renderPodium(containerId, leaderboard) {
   const wrap = document.getElementById(containerId);
+  if (!wrap) return;
   wrap.innerHTML = '';
-  const top3  = leaderboard.slice(0, 3);
+  const top3    = leaderboard.slice(0, 3);
   if (!top3.length) return;
   const slots   = [top3[1], top3[0], top3[2]];
-  const classes  = ['second','first','third'];
-  const medals   = ['🥈','🥇','🥉'];
-  const labels   = ['2','1','3'];
+  const classes = ['second','first','third'];
+  const medals  = ['🥈','🥇','🥉'];
+  const labels  = ['2','1','3'];
   slots.forEach((entry, i) => {
     if (!entry) return;
     const div = document.createElement('div');
@@ -740,21 +738,32 @@ function renderPodium(containerId, leaderboard) {
 
 function launchConfetti() {
   const colors = ['#f59e0b','#10b981','#7c3aed','#ef4444','#3b82f6','#f97316','#ec4899'];
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 120; i++) {
     const el   = document.createElement('div');
     const size = Math.random() * 10 + 5;
+    const isRect = Math.random() > 0.5;
     el.style.cssText = [
-      `position:fixed`,`width:${size}px`,`height:${size}px`,
-      `background:${colors[Math.floor(Math.random()*colors.length)]}`,
-      `left:${Math.random()*100}vw`,`top:-12px`,
-      `border-radius:${Math.random()>0.5?'50%':'2px'}`,
-      `z-index:9999`,`pointer-events:none`,
-      `animation:confetti-fall ${Math.random()*2+2.5}s linear forwards`,
-      `animation-delay:${Math.random()*2}s`,
+      `position:fixed`,
+      `width:${isRect ? size * 1.6 : size}px`,
+      `height:${size}px`,
+      `background:${colors[Math.floor(Math.random() * colors.length)]}`,
+      `left:${Math.random() * 100}vw`,
+      `top:-12px`,
+      `border-radius:${isRect ? '2px' : '50%'}`,
+      `z-index:9999`,
+      `pointer-events:none`,
+      `animation:confetti-fall ${Math.random() * 2 + 2.5}s linear forwards`,
+      `animation-delay:${Math.random() * 2}s`,
     ].join(';');
     document.body.appendChild(el);
     setTimeout(() => el.remove(), 6000);
   }
+}
+
+// ─── Utils ────────────────────────────────────────────────────────────────────
+
+function escapeHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 // ─── Connection ───────────────────────────────────────────────────────────────
@@ -764,4 +773,6 @@ socket.on('connect_error', () => setConnectionStatus('disconnected'));
 socket.on('connect', () => {
   setConnectionStatus('connected');
   if (state.hostKey && state.roomCode) tryRejoinRoom();
+  else if (state.hostKey) tryAutoRestoreHost();
 });
+})();

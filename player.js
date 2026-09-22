@@ -1,139 +1,102 @@
-'use strict';
+(function() {
+// ─── Sound removed ──────────────────────────────────────────────────────────────
+// Audio has been disabled. getCtx() is a no-op and sfx.* calls do nothing,
+// so existing call sites keep working silently.
 
-const socket = io();
-
-// ─── Audio engine (Web Audio API, no files) ───────────────────────────────────
-
-let audioCtx = null;
-let muted = localStorage.getItem('muted') === '1';
-
-function getCtx() {
-  if (!audioCtx) {
-    const C = window.AudioContext || window.webkitAudioContext;
-    if (C) audioCtx = new C();
-  }
-  if (audioCtx?.state === 'suspended') audioCtx.resume();
-  return audioCtx;
-}
-
-// Resume on first interaction (required by mobile browsers)
-document.addEventListener('pointerdown', () => getCtx(), { once: false, passive: true });
-
-function beep(freq, dur, type = 'sine', vol = 0.22) {
-  if (muted) return;
-  const ctx = getCtx();
-  if (!ctx) return;
-  const osc  = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  osc.type = type;
-  osc.frequency.setValueAtTime(freq, ctx.currentTime);
-  gain.gain.setValueAtTime(vol, ctx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
-  osc.start();
-  osc.stop(ctx.currentTime + dur);
-}
-
-function seq(notes) {
-  notes.forEach(n => setTimeout(() => beep(n.f, n.d, n.t || 'sine', n.v || 0.22), n.at || 0));
-}
-
-// Swooping tone (freq ramp)
-function sweep(f1, f2, dur, type = 'sawtooth', vol = 0.25) {
-  if (muted) return;
-  const ctx = getCtx();
-  if (!ctx) return;
-  const osc  = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  osc.type = type;
-  osc.frequency.setValueAtTime(f1, ctx.currentTime);
-  osc.frequency.linearRampToValueAtTime(f2, ctx.currentTime + dur);
-  gain.gain.setValueAtTime(vol, ctx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
-  osc.start();
-  osc.stop(ctx.currentTime + dur);
-}
-
-const sfx = {
-  submit()    { beep(900, 0.10, 'sine', 0.18); },
-  tick()      { beep(560, 0.07, 'square', 0.10); },
-  urgentTick(){ beep(880, 0.07, 'square', 0.14); },
-  timeUp()    { sweep(480, 90, 0.75, 'sawtooth', 0.28); },
-  roundStart(){ seq([{f:400,d:0.09,at:0},{f:600,d:0.09,at:80},{f:900,d:0.15,at:160}]); },
-  goodScore() { seq([{f:523,d:0.12,at:0},{f:659,d:0.12,at:110},{f:784,d:0.22,at:220}]); },
-  badScore()  { sweep(250, 120, 0.35, 'square', 0.18); },
-  revealReject(){ sweep(300, 110, 0.32, 'square', 0.18); },
-  revealShared(){ beep(640, 0.14, 'sine', 0.16); },
-  revealUnique(){ seq([{f:659,d:0.10,at:0},{f:880,d:0.12,at:90},{f:1175,d:0.30,at:190,v:0.24}]); },
-  fanfare()   {
-    seq([
-      {f:523,d:0.13,at:0},   {f:523,d:0.13,at:140},
-      {f:523,d:0.13,at:280}, {f:698,d:0.35,at:420},
-      {f:659,d:0.35,at:780}, {f:587,d:0.13,at:1100},
-      {f:784,d:0.55,at:1240},
-    ]);
-  },
-};
-
-// ─── Mute toggle ──────────────────────────────────────────────────────────────
-
-function updateMuteBtn() {
-  const btn = document.getElementById('mute-btn');
-  if (!btn) return;
-  btn.textContent = muted ? '🔇' : '🔊';
-  btn.title = muted ? 'تشغيل الصوت' : 'كتم الصوت';
-}
-updateMuteBtn();
-
-document.getElementById('mute-btn')?.addEventListener('click', () => {
-  muted = !muted;
-  localStorage.setItem('muted', muted ? '1' : '0');
-  updateMuteBtn();
-});
+function getCtx() { return null; }
+const sfx = new Proxy({}, { get: () => () => {} });
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
-let state = {
+let pState = {
   playerId: localStorage.getItem('playerId'),
   roomCode: localStorage.getItem('roomCode'),
   nickname: localStorage.getItem('nickname'),
   phase: 'lobby',
+  status: 'active',
   roundEndsAt: null,
   tickInterval: null,
   myAnswers: [],
   lastTickSec: -1,
-  revealMyScore: 0,
+  specTickInterval: null,
+  specBoxes: {},
 };
 
-// ─── Screen / state helpers ───────────────────────────────────────────────────
-
-function showScreen(id) {
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  document.getElementById(`screen-${id}`).classList.add('active');
-}
+// ─── Screen helpers ───────────────────────────────────────────────────────────
 
 function showGameState(name) {
-  ['waiting','round','ended','reveal','results','final'].forEach(n =>
-    document.getElementById(`state-${n}`).classList.toggle('hidden', n !== name)
+  ['waiting','round','ended','results','final',
+   'spectateIdle','eliminated','spectate'].forEach(n =>
+    document.getElementById(`state-${n}`)?.classList.toggle('hidden', n !== name)
   );
 }
 
+function showSpectatorIdle() {
+  showGameState('spectateIdle');
+}
+
 function setConnectionStatus(status) {
-  document.getElementById('status-dot').className = `status-dot ${status}`;
-  document.getElementById('conn-label').textContent =
+  const dot = document.getElementById('status-dot');
+  const lbl = document.getElementById('conn-label');
+  if (!dot) return;
+  dot.className = `status-dot ${status}`;
+  lbl.textContent =
     status === 'connected'    ? 'متصل' :
     status === 'reconnecting' ? 'إعادة الاتصال…' : 'منقطع';
 }
 
-function showJoinError(msg) { document.getElementById('join-error').textContent = msg; }
+function showJoinError(msg) {
+  const el = document.getElementById('join-error');
+  if (el) el.textContent = msg;
+}
 
 function clearPlayerStorage() {
   ['playerId','roomCode','nickname'].forEach(k => localStorage.removeItem(k));
-  state.playerId = state.roomCode = state.nickname = null;
+  pState.playerId = pState.roomCode = pState.nickname = null;
 }
+
+// ─── Navigation helpers ───────────────────────────────────────────────────────
+
+function playerGoToMenu() {
+  clearPlayerStorage();
+  clearInterval(pState.tickInterval);
+  clearInterval(pState.specTickInterval);
+  hideLeavModal();
+  showScreen('join');
+}
+
+function showLeaveModal() {
+  document.getElementById('leave-modal')?.classList.remove('hidden');
+}
+
+function hideLeavModal() {
+  document.getElementById('leave-modal')?.classList.add('hidden');
+}
+
+document.getElementById('player-leave-btn')?.addEventListener('click', showLeaveModal);
+document.getElementById('leave-cancel-btn')?.addEventListener('click', hideLeavModal);
+document.getElementById('leave-confirm-btn')?.addEventListener('click', () => {
+  if (pState.playerId && pState.roomCode) {
+    socket.emit('player:leave', { code: pState.roomCode, playerId: pState.playerId });
+  }
+  playerGoToMenu();
+});
+
+document.getElementById('player-final-menu-btn')?.addEventListener('click', playerGoToMenu);
+
+document.getElementById('join-back-btn')?.addEventListener('click', () => {
+  showJoinError('');
+  showScreen('join');
+});
+
+document.getElementById('menu-btn-join')?.addEventListener('click', () => {
+  getCtx();
+  showScreen('join');
+  const params = new URLSearchParams(window.location.search);
+  const roomFromUrl = params.get('room');
+  if (roomFromUrl) document.getElementById('input-room-code').value = roomFromUrl.toUpperCase();
+  setTimeout(() => document.getElementById('input-room-code').focus(), 50);
+});
 
 // ─── Join / reconnect ─────────────────────────────────────────────────────────
 
@@ -143,33 +106,37 @@ function attemptJoin(code, nickname, playerId) {
       if (res.error === 'تمت إزالتك من الغرفة') clearPlayerStorage();
       showJoinError(res.error);
       showScreen('join');
-      document.getElementById('btn-join').disabled = false;
+      const btn = document.getElementById('btn-join');
+      if (btn) btn.disabled = false;
       return;
     }
 
-    state.playerId = res.playerId;
-    state.roomCode = code.toUpperCase();
-    state.nickname = res.nickname;
+    pState.playerId = res.playerId;
+    pState.roomCode = code.toUpperCase();
+    pState.nickname = res.nickname;
+    pState.status   = res.status || 'active';
     localStorage.setItem('playerId', res.playerId);
-    localStorage.setItem('roomCode', state.roomCode);
+    localStorage.setItem('roomCode', pState.roomCode);
     localStorage.setItem('nickname', res.nickname);
 
-    document.getElementById('display-nickname').textContent = res.nickname;
+    const nickEl = document.getElementById('display-nickname');
+    if (nickEl) nickEl.textContent = res.nickname;
     showScreen('lobby');
 
-    if (res.phase === 'round' && res.roundInfo) {
+    if (res.spectateInfo) {
+      enterSpectate(res.spectateInfo);
+    } else if (res.phase === 'round' && res.roundInfo) {
       enterRound(res.roundInfo.category, res.roundInfo.endsAt, res.roundInfo.myAnswers || []);
-      if (res.roundInfo.standings) renderMiniRace(res.roundInfo.standings);
-    } else if (res.phase === 'reveal' && res.revealInfo) {
-      resumePlayerReveal(res.revealInfo);
+    } else if (res.phase === 'finished' && res.leaderboard) {
+      renderFinal(res.leaderboard);
+      showGameState('final');
+    } else if (pState.status !== 'active') {
+      showSpectatorIdle();
     } else if (res.phase === 'adjudication') {
       showGameState('ended');
     } else if (res.phase === 'results' && res.leaderboard) {
       renderLeaderboard(res.leaderboard, res.roundNumber);
       showGameState('results');
-    } else if (res.phase === 'finished' && res.leaderboard) {
-      renderFinal(res.leaderboard);
-      showGameState('final');
     } else {
       showGameState('waiting');
     }
@@ -181,139 +148,135 @@ function attemptJoin(code, nickname, playerId) {
 (function init() {
   const params = new URLSearchParams(window.location.search);
   const roomFromUrl = params.get('room');
-  if (roomFromUrl) document.getElementById('input-room-code').value = roomFromUrl.toUpperCase();
 
-  if (state.playerId && state.roomCode) {
-    attemptJoin(state.roomCode, state.nickname, state.playerId);
-  } else {
+  if (roomFromUrl) {
+    document.getElementById('input-room-code').value = roomFromUrl.toUpperCase();
     showScreen('join');
+    setTimeout(() => document.getElementById('input-nickname')?.focus(), 50);
+    return;
   }
+
+  if (pState.playerId && pState.roomCode) {
+    attemptJoin(pState.roomCode, pState.nickname, pState.playerId);
+    return;
+  }
+
+  showScreen('join');
 })();
 
 // ─── Join form ────────────────────────────────────────────────────────────────
 
-document.getElementById('btn-join').addEventListener('click', doJoin);
-document.getElementById('input-nickname').addEventListener('keydown', e => { if (e.key === 'Enter') doJoin(); });
-document.getElementById('input-room-code').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('input-nickname').focus(); });
-document.getElementById('input-room-code').addEventListener('input', e => { e.target.value = e.target.value.toUpperCase(); });
+document.getElementById('btn-join')?.addEventListener('click', doJoin);
+document.getElementById('input-nickname')?.addEventListener('keydown', e => { if (e.key === 'Enter') doJoin(); });
+document.getElementById('input-room-code')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('input-nickname').focus();
+});
+document.getElementById('input-room-code')?.addEventListener('input', e => {
+  e.target.value = e.target.value.toUpperCase();
+});
 
 function doJoin() {
-  const code = document.getElementById('input-room-code').value.trim().toUpperCase();
+  const code     = document.getElementById('input-room-code').value.trim().toUpperCase();
   const nickname = document.getElementById('input-nickname').value.trim();
   showJoinError('');
   if (!code || code.length !== 4) { showJoinError('أدخل كود الغرفة (4 أحرف)'); return; }
-  if (!nickname) { showJoinError('أدخل اسمك'); return; }
-  document.getElementById('btn-join').disabled = true;
-  getCtx(); // unlock audio on first interaction
+  if (!nickname)                  { showJoinError('أدخل اسمك'); return; }
+  const btn = document.getElementById('btn-join');
+  if (btn) btn.disabled = true;
+  getCtx();
   attemptJoin(code, nickname, null);
 }
 
-// ─── Round: enter ─────────────────────────────────────────────────────────────
+// ─── Round ────────────────────────────────────────────────────────────────────
 
 function enterRound(category, endsAt, existingAnswers) {
-  state.phase = 'round';
-  state.roundEndsAt = endsAt;
-  state.myAnswers = [...existingAnswers];
-  state.lastTickSec = -1;
+  pState.phase      = 'round';
+  pState.roundEndsAt = endsAt;
+  pState.myAnswers  = [...existingAnswers];
+  pState.lastTickSec = -1;
 
   document.getElementById('category-display').textContent = category;
-  document.getElementById('answer-input').value = '';
-  document.getElementById('answer-input').disabled = false;
+  const input = document.getElementById('answer-input');
+  input.value = '';
+  input.disabled = false;
   document.getElementById('btn-submit-answer').disabled = false;
 
   const area = document.getElementById('chips-area');
   area.innerHTML = '';
-  state.myAnswers.forEach(a => addChip(a, false));
-
-  document.getElementById('mini-race-list').innerHTML =
-    '<p class="text-muted" style="font-size:0.85rem;text-align:center;">في انتظار الإجابات…</p>';
+  pState.myAnswers.forEach(a => addChip(a, false));
 
   showGameState('round');
-
-  // Flash the round card green briefly
-  const roundCard = document.querySelector('#state-round .card');
-  if (roundCard) {
-    roundCard.classList.remove('round-start-flash');
-    void roundCard.offsetWidth; // reflow to restart animation
-    roundCard.classList.add('round-start-flash');
-  }
-
   startCountdown(endsAt);
-  document.getElementById('answer-input').focus();
+  input.focus();
 }
 
-// ─── Countdown ────────────────────────────────────────────────────────────────
-
 function startCountdown(endsAt) {
-  clearInterval(state.tickInterval);
+  clearInterval(pState.tickInterval);
   const el = document.getElementById('countdown');
 
   function tick() {
     const rem = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
     el.textContent = rem;
-    const urgent = rem <= 10 && rem > 0;
-    el.classList.toggle('urgent', urgent || rem === 0);
-
-    // Play a tick sound once per second during last 10s
-    if (urgent && rem !== state.lastTickSec) {
-      state.lastTickSec = rem;
-      rem <= 5 ? sfx.urgentTick() : sfx.tick();
-    }
-    if (rem <= 0) clearInterval(state.tickInterval);
+    el.classList.toggle('urgent', rem <= 10 && rem > 0);
+    if (rem <= 0) clearInterval(pState.tickInterval);
   }
   tick();
-  state.tickInterval = setInterval(tick, 250);
+  pState.tickInterval = setInterval(tick, 250);
 }
 
-// ─── Answer submission ────────────────────────────────────────────────────────
-
-document.getElementById('btn-submit-answer').addEventListener('click', submitAnswer);
-document.getElementById('answer-input').addEventListener('keydown', e => { if (e.key === 'Enter') submitAnswer(); });
+document.getElementById('btn-submit-answer')?.addEventListener('click', submitAnswer);
+document.getElementById('answer-input')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') submitAnswer();
+});
 
 function submitAnswer() {
-  const input = document.getElementById('answer-input');
+  const input  = document.getElementById('answer-input');
   const answer = input.value.trim();
-  if (!answer || state.phase !== 'round') return;
-  socket.emit('player:submit_answer', { code: state.roomCode, answer });
+  if (!answer || pState.phase !== 'round') return;
+  document.getElementById('btn-submit-answer').disabled = true;
+  socket.emit('player:submit_answer', { code: pState.roomCode, answer });
   input.value = '';
   input.focus();
+  setTimeout(() => { document.getElementById('btn-submit-answer').disabled = false; }, 200);
 }
 
 socket.on('player:answer_received', ({ answer }) => {
-  addChip(answer, true);
-  sfx.submit();
+  prependChip(document.getElementById('chips-area'), answer, true);
+  // no submit sound
 });
 
-function addChip(text, animate = true) {
+function prependChip(container, text, animate = true) {
+  if (!container) return;
   const chip = document.createElement('div');
   chip.className = animate ? 'chip chip-new' : 'chip';
   chip.textContent = text;
-  document.getElementById('chips-area').prepend(chip);
+  container.prepend(chip);
 }
 
-// ─── Round events ─────────────────────────────────────────────────────────────
+function addChip(text, animate = true) {
+  prependChip(document.getElementById('chips-area'), text, animate);
+}
 
 socket.on('round:started', ({ category, endsAt }) => {
-  state.myAnswers = [];
+  if (pState.status !== 'active') return;
+  pState.myAnswers = [];
   sfx.roundStart();
   enterRound(category, endsAt, []);
 });
 
 socket.on('round:tick', ({ remaining }) => {
-  if (state.phase !== 'round') return;
+  if (pState.phase !== 'round') return;
   const el = document.getElementById('countdown');
   if (!el) return;
   el.textContent = remaining;
   el.classList.toggle('urgent', remaining <= 10 && remaining > 0);
-  if (remaining <= 10 && remaining > 0 && remaining !== state.lastTickSec) {
-    state.lastTickSec = remaining;
-    remaining <= 5 ? sfx.urgentTick() : sfx.tick();
-  }
+  // no tick sounds
 });
 
 socket.on('round:time_up', () => {
-  clearInterval(state.tickInterval);
-  state.phase = 'adjudication';
+  if (pState.status !== 'active') return;
+  clearInterval(pState.tickInterval);
+  pState.phase = 'adjudication';
   sfx.timeUp();
   document.getElementById('answer-input').disabled = true;
   document.getElementById('btn-submit-answer').disabled = true;
@@ -321,151 +284,109 @@ socket.on('round:time_up', () => {
 });
 
 socket.on('round:reset', () => {
-  state.phase = 'lobby';
-  clearInterval(state.tickInterval);
-  showGameState('waiting');
+  pState.phase = 'lobby';
+  clearInterval(pState.tickInterval);
+  clearInterval(pState.specTickInterval);
+  if (pState.status !== 'active') showSpectatorIdle();
+  else showGameState('waiting');
 });
 
-// ─── Live race board ──────────────────────────────────────────────────────────
+// ─── Elimination ──────────────────────────────────────────────────────────────
 
-socket.on('round:standings', ({ standings }) => {
-  if (state.phase !== 'round') return;
-  renderMiniRace(standings);
+socket.on('player:eliminated', () => {
+  pState.status = 'out';
+  clearInterval(pState.tickInterval);
+  showGameState('eliminated');
 });
 
-function renderMiniRace(standings) {
-  const list = document.getElementById('mini-race-list');
-  if (!list) return;
-  if (!standings || !standings.length) {
-    list.innerHTML = '<p class="text-muted" style="font-size:0.85rem;text-align:center;">في انتظار الإجابات…</p>';
-    return;
+// ─── Spectator live view ──────────────────────────────────────────────────────
+
+function enterSpectate(info) {
+  pState.phase = 'spectate';
+  clearInterval(pState.tickInterval);
+  clearInterval(pState.specTickInterval);
+  document.getElementById('spectate-banner').textContent = '👀 أنت تتفرّج';
+  document.getElementById('spectate-category').textContent = info.category || '';
+  buildSpectateGrid(info.players || []);
+  if (info.answers) {
+    for (const pid of Object.keys(info.answers)) {
+      (info.answers[pid] || []).forEach(a => addSpectateChip(pid, a, false));
+    }
   }
-  list.innerHTML = '';
-  standings.forEach((s) => {
-    const isMe = s.playerId === state.playerId;
-    const row = document.createElement('div');
-    row.className = 'mini-race-row' + (isMe ? ' me' : '') + (s.rank === 1 && s.count > 0 ? ' leader' : '');
-    row.innerHTML = `
-      <span class="mini-race-rank">${s.rank}</span>
-      <span class="mini-race-name">${escapeHtml(s.nickname)}${isMe ? ' <span style="color:var(--accent);font-size:0.7rem;">(أنت)</span>' : ''}</span>
-      <span class="mini-race-count">${s.count}</span>`;
-    list.appendChild(row);
+  startSpectateCountdown(info.endsAt);
+  showGameState('spectate');
+}
+
+function buildSpectateGrid(players) {
+  const grid = document.getElementById('spectate-grid');
+  grid.innerHTML = '';
+  pState.specBoxes = {};
+  players.forEach(p => {
+    const box = document.createElement('div');
+    box.className = 'spec-box';
+    box.innerHTML = `
+      <div class="spec-box-name">${escapeHtml(p.nickname)}</div>
+      <div class="spec-chips"></div>
+    `;
+    grid.appendChild(box);
+    pState.specBoxes[p.playerId] = box.querySelector('.spec-chips');
   });
 }
 
-// ─── Reveal sequence ──────────────────────────────────────────────────────────
-
-function playerRevealCardHtml(item, mine) {
-  const ptsClass = item.tier === 'unique' ? 'pts-unique'
-                 : item.tier === 'rejected' ? 'pts-rejected' : 'pts-shared';
-  const ptsText  = (item.points > 0 ? '+' : '') + item.points;
-  const countTxt = item.count + ' ' + (item.count === 1 ? 'لاعب' : 'لاعبين');
-  const mineTag  = mine ? '<div class="reveal-mine-tag">✨ إجابتك</div>' : '';
-  return `
-    <div class="reveal-card hero pop tier-${item.tier} ${mine ? 'mine' : ''}">
-      ${mineTag}
-      <div class="reveal-card-main">
-        <span class="reveal-card-label">${escapeHtml(item.label)}</span>
-        <span class="reveal-points ${ptsClass}">${ptsText}</span>
-      </div>
-      <div class="reveal-card-sub">
-        <span class="reveal-card-count">${countTxt}</span>
-      </div>
-    </div>`;
+function addSpectateChip(playerId, answer, animate = true) {
+  prependChip(pState.specBoxes[playerId], answer, animate);
 }
 
-function updateRevealScore() {
-  const el = document.getElementById('reveal-my-score');
-  el.textContent = (state.revealMyScore > 0 ? '+' : '') + state.revealMyScore;
-  el.className = state.revealMyScore > 0 ? 'pos' : state.revealMyScore < 0 ? 'neg' : '';
-}
-
-function renderPlayerReveal(item) {
-  const mine = item.playerIds && item.playerIds.includes(state.playerId);
-  document.getElementById('player-reveal-stage').innerHTML = playerRevealCardHtml(item, mine);
-
-  if (mine) {
-    state.revealMyScore += item.points;
-    updateRevealScore();
-    const el = document.getElementById('reveal-my-score');
-    el.classList.remove('score-pop'); void el.offsetWidth; el.classList.add('score-pop');
-    if (item.tier === 'unique')        sfx.revealUnique();
-    else if (item.tier === 'rejected') sfx.revealReject();
-    else                               sfx.revealShared();
-  } else {
-    sfx.tick();   // soft tick for other players' answers
+function startSpectateCountdown(endsAt) {
+  clearInterval(pState.specTickInterval);
+  const el = document.getElementById('spectate-countdown');
+  if (!endsAt) { el.textContent = ''; return; }
+  function tick() {
+    const rem = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+    el.textContent = rem;
+    el.classList.toggle('urgent', rem <= 10);
+    if (rem <= 0) clearInterval(pState.specTickInterval);
   }
+  tick();
+  pState.specTickInterval = setInterval(tick, 250);
 }
 
-socket.on('round:reveal_start', () => {
-  state.phase = 'reveal';
-  state.revealMyScore = 0;
-  updateRevealScore();
-  document.getElementById('player-reveal-stage').innerHTML =
-    '<div class="reveal-hint">في انتظار المضيف لبدء الكشف…</div>';
-  clearInterval(state.tickInterval);
-  showGameState('reveal');
+socket.on('spectate:round_start', (info) => {
+  if (pState.status === 'active') return;
+  enterSpectate(info);
 });
-
-socket.on('round:reveal_item', ({ item }) => {
-  if (state.phase !== 'reveal') return;
-  renderPlayerReveal(item);
+socket.on('spectate:answer', ({ playerId, answer }) => {
+  if (pState.phase === 'spectate') addSpectateChip(playerId, answer, true);
 });
-
-function resumePlayerReveal(info) {
-  state.phase = 'reveal';
-  state.revealMyScore = 0;
-  (info.items || []).forEach(it => {
-    if (it.playerIds && it.playerIds.includes(state.playerId)) state.revealMyScore += it.points;
-  });
-  updateRevealScore();
-  const stage = document.getElementById('player-reveal-stage');
-  if (info.items && info.items.length) {
-    const lastItem = info.items[info.items.length - 1];
-    const mine = lastItem.playerIds && lastItem.playerIds.includes(state.playerId);
-    stage.innerHTML = playerRevealCardHtml(lastItem, mine);
-  } else {
-    stage.innerHTML = '<div class="reveal-hint">في انتظار المضيف لبدء الكشف…</div>';
-  }
-  showGameState('reveal');
-}
+socket.on('spectate:round_end', () => {
+  clearInterval(pState.specTickInterval);
+});
 
 // ─── Results / leaderboard ────────────────────────────────────────────────────
 
 socket.on('round:results', ({ leaderboard, roundNumber }) => {
-  state.phase = 'results';
+  pState.phase = 'results';
   renderLeaderboard(leaderboard, roundNumber);
   showGameState('results');
-
-  // Play score sound based on own delta
-  const mine = leaderboard.find(e => e.playerId === state.playerId);
-  if (mine) {
-    setTimeout(() => {
-      if (mine.roundScore > 0) sfx.goodScore();
-      else if (mine.roundScore < 0) sfx.badScore();
-    }, 500);
-  }
 });
 
 function renderLeaderboard(leaderboard, roundNumber) {
   document.getElementById('results-round-num').textContent = roundNumber;
   const tbody = document.getElementById('results-tbody');
   tbody.innerHTML = '';
-
   leaderboard.forEach((entry, idx) => {
-    const tr = document.createElement('tr');
-    const isMe = entry.playerId === state.playerId;
-    if (isMe)       tr.className = 'my-row lb-row-enter';
+    const tr   = document.createElement('tr');
+    const isMe = entry.playerId === pState.playerId;
+    if (isMe)         tr.className = 'my-row lb-row-enter';
     else if (idx===0) tr.className = 'rank-1-row lb-row-enter';
     else              tr.className = 'lb-row-enter';
-    tr.style.setProperty('--row-delay', `${idx * 70}ms`);
-
-    const sign = entry.roundScore > 0 ? '+' : '';
-    const cls  = entry.roundScore > 0 ? 'delta-pos' : entry.roundScore < 0 ? 'delta-neg' : 'delta-zero';
+    const sign  = entry.roundScore > 0 ? '+' : '';
+    const cls   = entry.roundScore > 0 ? 'delta-pos' : entry.roundScore < 0 ? 'delta-neg' : 'delta-zero';
+    const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '';
     tr.innerHTML = `
-      <td class="rank-cell">${entry.rank}</td>
-      <td class="name-cell">${escapeHtml(entry.nickname)}${isMe ? ' <span style="color:var(--accent);font-size:0.75rem;">(أنت)</span>' : ''}</td>
-      <td class="delta-cell ${cls} delta-pop" style="animation-delay:${idx*70+300}ms">${sign}${entry.roundScore}</td>
+      <td class="rank-cell">${medal || entry.rank}</td>
+      <td class="name-cell">${escapeHtml(entry.nickname)}${isMe ? ' <span class="you-badge">(أنت)</span>' : ''}</td>
+      <td class="delta-cell ${cls} delta-pop">${sign}${entry.roundScore}</td>
       <td class="score-cell">${entry.totalScore}</td>
     `;
     tbody.appendChild(tr);
@@ -475,7 +396,7 @@ function renderLeaderboard(leaderboard, roundNumber) {
 // ─── Final screen ─────────────────────────────────────────────────────────────
 
 socket.on('game:finished', ({ leaderboard }) => {
-  state.phase = 'finished';
+  pState.phase = 'finished';
   renderFinal(leaderboard);
   showGameState('final');
   sfx.fanfare();
@@ -487,17 +408,13 @@ function renderFinal(leaderboard) {
   const tbody = document.getElementById('final-tbody');
   tbody.innerHTML = '';
   leaderboard.forEach((entry, idx) => {
-    const isMe = entry.playerId === state.playerId;
-    const tr = document.createElement('tr');
-    tr.className = [
-      isMe ? 'my-row' : '',
-      idx === 0 ? 'rank-1-row' : '',
-      'lb-row-enter',
-    ].filter(Boolean).join(' ');
-    tr.style.setProperty('--row-delay', `${idx * 60}ms`);
+    const isMe = entry.playerId === pState.playerId;
+    const tr   = document.createElement('tr');
+    tr.className = [isMe ? 'my-row' : '', idx === 0 ? 'rank-1-row' : '', 'lb-row-enter'].filter(Boolean).join(' ');
+    const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '';
     tr.innerHTML = `
-      <td class="rank-cell">${entry.rank}</td>
-      <td class="name-cell">${escapeHtml(entry.nickname)}${isMe ? ' <span style="color:var(--accent);font-size:0.75rem;">(أنت)</span>' : ''}</td>
+      <td class="rank-cell">${medal || entry.rank}</td>
+      <td class="name-cell">${escapeHtml(entry.nickname)}${isMe ? ' <span class="you-badge">(أنت)</span>' : ''}</td>
       <td class="score-cell">${entry.totalScore}</td>
     `;
     tbody.appendChild(tr);
@@ -508,13 +425,14 @@ function renderFinal(leaderboard) {
 
 function renderPodium(containerId, leaderboard) {
   const wrap = document.getElementById(containerId);
+  if (!wrap) return;
   wrap.innerHTML = '';
-  const top3 = leaderboard.slice(0, 3);
+  const top3    = leaderboard.slice(0, 3);
   if (!top3.length) return;
   const slots   = [top3[1], top3[0], top3[2]];
-  const classes  = ['second','first','third'];
-  const medals   = ['🥈','🥇','🥉'];
-  const labels   = ['2','1','3'];
+  const classes = ['second','first','third'];
+  const medals  = ['🥈','🥇','🥉'];
+  const labels  = ['2','1','3'];
   slots.forEach((entry, i) => {
     if (!entry) return;
     const div = document.createElement('div');
@@ -529,18 +447,18 @@ function renderPodium(containerId, leaderboard) {
   });
 }
 
-// ─── Kick / room closed ───────────────────────────────────────────────────────
+// ─── Kicked / room closed ─────────────────────────────────────────────────────
 
 socket.on('player:kicked', () => {
   clearPlayerStorage();
-  clearInterval(state.tickInterval);
+  clearInterval(pState.tickInterval);
   showJoinError('تمت إزالتك من الغرفة');
   showScreen('join');
 });
 
 socket.on('room:closed', () => {
   clearPlayerStorage();
-  clearInterval(state.tickInterval);
+  clearInterval(pState.tickInterval);
   showJoinError('تم إغلاق الغرفة');
   showScreen('join');
 });
@@ -551,24 +469,31 @@ socket.on('disconnect', () => setConnectionStatus('reconnecting'));
 socket.on('connect_error', () => setConnectionStatus('disconnected'));
 socket.on('connect', () => {
   setConnectionStatus('connected');
-  if (state.playerId && state.roomCode) attemptJoin(state.roomCode, state.nickname, state.playerId);
+  if (pState.playerId && pState.roomCode) {
+    attemptJoin(pState.roomCode, pState.nickname, pState.playerId);
+  }
 });
 
 // ─── Confetti ─────────────────────────────────────────────────────────────────
 
 function launchConfetti() {
   const colors = ['#f59e0b','#10b981','#7c3aed','#ef4444','#3b82f6','#f97316','#ec4899'];
-  for (let i = 0; i < 90; i++) {
+  for (let i = 0; i < 70; i++) {
     const el   = document.createElement('div');
-    const size = Math.random() * 10 + 5;
+    const size = Math.random() * 8 + 5;
+    const isRect = Math.random() > 0.5;
     el.style.cssText = [
-      `position:fixed`,`width:${size}px`,`height:${size}px`,
-      `background:${colors[Math.floor(Math.random()*colors.length)]}`,
-      `left:${Math.random()*100}vw`,`top:-12px`,
-      `border-radius:${Math.random()>0.5?'50%':'2px'}`,
-      `z-index:9999`,`pointer-events:none`,
-      `animation:confetti-fall ${Math.random()*2+2.5}s linear forwards`,
-      `animation-delay:${Math.random()*1.5}s`,
+      `position:fixed`,
+      `width:${isRect ? size * 1.6 : size}px`,
+      `height:${size}px`,
+      `background:${colors[Math.floor(Math.random() * colors.length)]}`,
+      `left:${Math.random() * 100}vw`,
+      `top:-12px`,
+      `border-radius:${isRect ? '2px' : '50%'}`,
+      `z-index:9999`,
+      `pointer-events:none`,
+      `animation:confetti-fall ${Math.random() * 2 + 2.5}s linear forwards`,
+      `animation-delay:${Math.random() * 1.5}s`,
     ].join(';');
     document.body.appendChild(el);
     setTimeout(() => el.remove(), 5500);
@@ -580,3 +505,4 @@ function launchConfetti() {
 function escapeHtml(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+})();
